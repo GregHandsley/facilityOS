@@ -111,6 +111,32 @@ service cloud.firestore {
         && request.resource.data.hasActivePublicFault == true;
     }
 
+    function isCareSummaryUpdate() {
+      return teamForFacility(resource.data.facilityId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "lastCleanedAt",
+          "lastMaintainedAt",
+          "lastInspectedAt"
+        ]);
+    }
+
+    function taskEvidenceSatisfied() {
+      let equipment = get(/databases/$(database)/documents/equipment/$(resource.data.equipmentId));
+
+      return request.resource.data.status != "completed"
+        || resource.data.evidenceLevel == "quick"
+        || resource.data.evidenceLevel == "checklist"
+          && resource.data.checklistItems.size() > 0
+          && request.resource.data.checklistCompleted.hasAll(resource.data.checklistItems)
+        || resource.data.evidenceLevel == "qr"
+          && request.resource.data.qrConfirmation == equipment.data.publicSlug
+        || resource.data.evidenceLevel == "photo_note"
+          && request.resource.data.note is string
+          && request.resource.data.note.size() > 0
+          && request.resource.data.photoUrl is string
+          && request.resource.data.photoUrl.size() > 0;
+    }
+
     match /users/{userId} {
       allow create: if signedIn()
         && request.auth.uid == userId
@@ -232,7 +258,8 @@ service cloud.firestore {
           "outOfOrderMessage",
           "archived"
         ])
-        || isPublicFaultStateUpdate();
+        || isPublicFaultStateUpdate()
+        || isCareSummaryUpdate();
       allow delete: if false;
     }
 
@@ -289,10 +316,14 @@ service cloud.firestore {
             "status",
             "completedAt",
             "completedBy",
+            "checklistCompleted",
             "evidence",
             "note",
+            "photoUrl",
+            "qrConfirmation",
             "updatedAt"
-          ]);
+          ])
+          && taskEvidenceSatisfied();
       allow delete: if false;
     }
 

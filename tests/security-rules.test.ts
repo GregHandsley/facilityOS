@@ -61,9 +61,23 @@ describe("Firestore security rules", () => {
     expect(firestoreRules).toContain("allow get: if true;");
     expect(firestoreRules).toContain("allow list: if false;");
     expect(firestoreRules).toContain("function isPublicFaultStateUpdate()");
+    expect(firestoreRules).toContain("function isCareSummaryUpdate()");
+    expect(firestoreRules).toContain('"lastCleanedAt"');
     expect(firestoreRules).toContain("allow delete: if false;");
     expect(firestoreRules).not.toContain('"aiSummary"');
     expect(firestoreRules).not.toContain('"replacementStatus"');
+  });
+
+  it("allows staff task completion fields without schedule edits", () => {
+    expect(firestoreRules).toContain("match /careTaskInstances/{taskId}");
+    expect(firestoreRules).toContain("function taskEvidenceSatisfied()");
+    expect(firestoreRules).toContain("staffForFacility(resource.data.facilityId)");
+    expect(firestoreRules).toContain('"completedAt"');
+    expect(firestoreRules).toContain('"completedBy"');
+    expect(firestoreRules).toContain('"checklistCompleted"');
+    expect(firestoreRules).toContain('"qrConfirmation"');
+    expect(firestoreRules).toContain('"photoUrl"');
+    expect(firestoreRules).not.toContain('"frequency"');
   });
 });
 

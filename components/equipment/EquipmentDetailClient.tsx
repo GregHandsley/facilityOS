@@ -99,16 +99,18 @@ export function EquipmentDetailClient({ equipmentId }: { equipmentId: string }) 
 
   return (
     <section className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
-      <PremiumCard className="overflow-hidden">
+      <PremiumCard className="overflow-hidden p-4">
         {equipment.imageUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            alt={equipment.name}
-            className="aspect-[4/3] w-full rounded-2xl object-cover"
-            src={equipment.imageUrl}
-          />
+          <div className="flex h-[26rem] max-h-[58vh] min-h-80 w-full items-center justify-center rounded-2xl border border-white/10 bg-black/20 p-6">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              alt={equipment.name}
+              className="max-h-full max-w-full object-contain"
+              src={equipment.imageUrl}
+            />
+          </div>
         ) : (
-          <div className="flex aspect-[4/3] w-full items-center justify-center rounded-2xl bg-white/[0.06] text-facility-green">
+          <div className="flex h-[26rem] max-h-[58vh] min-h-80 w-full items-center justify-center rounded-2xl border border-white/10 bg-white/[0.06] text-facility-green">
             <Box className="h-12 w-12" />
           </div>
         )}

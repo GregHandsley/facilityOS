@@ -45,6 +45,9 @@ export default function ManagerPulsePage() {
               <Link href="/app/equipment">Equipment</Link>
             </Button>
             <Button asChild variant="secondary">
+              <Link href="/app/tasks">Tasks</Link>
+            </Button>
+            <Button asChild variant="secondary">
               <Link href="/app/issues">Issues</Link>
             </Button>
             <Button asChild variant="secondary">
