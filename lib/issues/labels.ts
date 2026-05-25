@@ -38,7 +38,10 @@ export function isIssueOpen(status: IssueStatus) {
   return status !== "resolved" && status !== "closed";
 }
 
-export function getIssueTone(status: IssueStatus, priority: IssuePriority) {
+export function getIssueTone(
+  status: IssueStatus,
+  priority: IssuePriority,
+): "green" | "amber" | "red" {
   if (status === "resolved" || status === "closed") {
     return "green";
   }

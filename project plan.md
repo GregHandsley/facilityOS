@@ -411,6 +411,26 @@ zone
 room
 area
 
+Future location terminology review:
+
+The location type dropdown may be confusing, especially the difference between zone and area.
+
+Before expanding location management further, review whether FacilityOS really needs both terms or whether the hierarchy should use simpler language.
+
+Possible options:
+
+facility
+room
+area
+
+or:
+
+facility
+zone
+room
+
+The final terminology should match how gym and sports facility teams naturally speak. If users cannot clearly explain the difference between a zone and an area, the product should avoid asking them to choose between both.
+
 Routes:
 
 /app/settings/facility
@@ -698,6 +718,10 @@ Route:
 
 /app/equipment/[equipmentId]/out-of-order
 
+Future QR-first staff route:
+
+/public/equipment/[slug] with authenticated staff actions
+
 Collection:
 
 outOfOrderEvents
@@ -710,6 +734,17 @@ photo
 unsafe/unavailable toggle
 note
 
+Staff QR flow:
+
+staff scans equipment QR code
+app recognises authenticated staff user
+public QR page shows staff-only actions
+staff can choose Mark out of order from the QR page
+equipment identity is pre-filled from the scanned QR code
+staff cannot mark a different item out of order from that scanned context
+public users never see staff actions
+managers may see manager actions from the same QR context
+
 When submitted:
 
 equipment turns red
@@ -720,12 +755,16 @@ public QR page updates
 manager is notified
 RBAC Requirements
 Staff can mark equipment out of order
+Staff can mark equipment out of order from a scanned QR code once staff QR actions are implemented
 Managers can also mark equipment out of order
 Managers can return equipment to service
 Staff cannot return equipment to service by default
 Public cannot mark equipment out of order
+Public users cannot see or trigger staff QR actions
 Testing Criteria
 Staff can mark out of order
+Logged-in staff scanning a QR code can access Mark out of order for that exact equipment
+Unauthenticated public users scanning the same QR code cannot see staff actions
 Equipment status becomes red
 Public page updates
 Issue is created
@@ -1104,17 +1143,31 @@ generate QR code
 download QR PNG
 batch export labels
 copy public URL
+
+Staff QR actions:
+
+authenticated staff scanning an equipment QR code see staff-only actions
+staff can open the internal equipment profile from the QR page
+staff can mark the scanned equipment out of order from the QR page
+staff can complete relevant QR-confirmation tasks from the QR context where applicable
+staff QR actions must be hidden from unauthenticated public users
+staff QR actions must respect facility membership and RBAC
 RBAC Requirements
 Managers can generate QR labels
 Staff can view public QR URL if needed
 Staff cannot bulk export by default
 Public cannot generate QR codes
+Public users cannot access staff QR actions
+Staff cannot use a QR code from another facility to access internal actions
 Testing Criteria
 QR points to correct public page
 Manager can download QR
 Manager can batch export
 Archived equipment excluded by default
 Public URL works
+Logged-in staff scan opens the QR page with staff actions
+Staff can mark the scanned item out of order from the QR page
+Public users only see the public status and public fault report flow
 Sprint 20: Notifications
 Goal
 

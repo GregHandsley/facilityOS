@@ -79,6 +79,15 @@ describe("Firestore security rules", () => {
     expect(firestoreRules).toContain('"photoUrl"');
     expect(firestoreRules).not.toContain('"frequency"');
   });
+
+  it("allows narrow out-of-order equipment updates", () => {
+    expect(firestoreRules).toContain("function staffMarksEquipmentOutOfOrder()");
+    expect(firestoreRules).toContain("function teamMarksPublicEquipmentOutOfOrder()");
+    expect(firestoreRules).toContain("function managerReturnsPublicEquipmentToService()");
+    expect(firestoreRules).toContain("match /outOfOrderEvents/{eventId}");
+    expect(firestoreRules).toContain('"linkedIssueId"');
+    expect(firestoreRules).toContain('"returnedToServiceBy"');
+  });
 });
 
 describe("Storage security rules", () => {

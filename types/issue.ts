@@ -35,7 +35,11 @@ export type PublicIssueReport = {
   createdAt: string;
 };
 
-export type ManagedIssue = Omit<PublicIssueReport, "status" | "priority"> & {
+export type ManagedIssue = Omit<
+  PublicIssueReport,
+  "reporterType" | "status" | "priority"
+> & {
+  reporterType: ReporterType;
   status: IssueStatus;
   priority: IssuePriority;
   assignedTo?: string;

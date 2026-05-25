@@ -137,6 +137,39 @@ service cloud.firestore {
           && request.resource.data.photoUrl.size() > 0;
     }
 
+    function staffMarksEquipmentOutOfOrder() {
+      return teamForFacility(resource.data.facilityId)
+        && request.resource.data.facilityId == resource.data.facilityId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "status",
+          "updatedAt"
+        ])
+        && request.resource.data.status == "red";
+    }
+
+    function teamMarksPublicEquipmentOutOfOrder() {
+      return teamForFacility(resource.data.facilityId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "hasActivePublicFault",
+          "outOfOrderMessage",
+          "publicStatus",
+          "publicStatusCopy"
+        ])
+        && request.resource.data.hasActivePublicFault == true
+        && request.resource.data.publicStatus == "red";
+    }
+
+    function managerReturnsPublicEquipmentToService() {
+      return managerForFacility(resource.data.facilityId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "outOfOrderMessage",
+          "publicStatus",
+          "publicStatusCopy"
+        ])
+        && request.resource.data.outOfOrderMessage == ""
+        && request.resource.data.publicStatus == "green";
+    }
+
     match /users/{userId} {
       allow create: if signedIn()
         && request.auth.uid == userId
@@ -172,7 +205,6 @@ service cloud.firestore {
       allow update: if managerForFacility(resource.data.facilityId)
         && request.resource.data.facilityId == resource.data.facilityId
         && request.resource.data.id == resource.data.id
-        && request.resource.data.publicSlug == resource.data.publicSlug
         && request.resource.data.createdAt == resource.data.createdAt;
       allow delete: if false;
     }
@@ -201,7 +233,8 @@ service cloud.firestore {
         && request.resource.data.status == "green"
         && request.resource.data.archived == false;
       allow update: if managerForFacility(resource.data.facilityId)
-        && request.resource.data.facilityId == resource.data.facilityId;
+        && request.resource.data.facilityId == resource.data.facilityId
+        || staffMarksEquipmentOutOfOrder();
       allow delete: if false;
     }
 
@@ -259,7 +292,9 @@ service cloud.firestore {
           "archived"
         ])
         || isPublicFaultStateUpdate()
-        || isCareSummaryUpdate();
+        || isCareSummaryUpdate()
+        || teamMarksPublicEquipmentOutOfOrder()
+        || managerReturnsPublicEquipmentToService();
       allow delete: if false;
     }
 
@@ -342,6 +377,9 @@ service cloud.firestore {
           "unsafe",
           "unavailable",
           "note",
+          "linkedIssueId",
+          "resolvedAt",
+          "returnedToServiceBy",
           "createdAt"
         ]);
       allow update: if managerForFacility(resource.data.facilityId)

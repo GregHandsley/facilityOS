@@ -2,10 +2,19 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Archive, Box, Edit3, MapPinned, QrCode } from "lucide-react";
+import {
+  AlertTriangle,
+  Archive,
+  Box,
+  Edit3,
+  MapPinned,
+  QrCode,
+  RotateCcw,
+} from "lucide-react";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { archiveEquipment, getEquipment } from "@/lib/db/equipment";
 import { getFacilityLocations } from "@/lib/db/facilities";
+import { returnEquipmentToService } from "@/lib/db/out-of-order";
 import { can } from "@/lib/rbac/can";
 import type { Equipment } from "@/types/equipment";
 import type { FacilityLocation } from "@/types/facility";
@@ -19,6 +28,7 @@ export function EquipmentDetailClient({ equipmentId }: { equipmentId: string }) 
   const [locations, setLocations] = useState<FacilityLocation[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [isArchiving, setIsArchiving] = useState(false);
+  const [isReturningToService, setIsReturningToService] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -78,6 +88,28 @@ export function EquipmentDetailClient({ equipmentId }: { equipmentId: string }) 
       setMessage("Equipment could not be archived.");
     } finally {
       setIsArchiving(false);
+    }
+  }
+
+  async function handleReturnToService() {
+    if (!equipment) {
+      return;
+    }
+
+    setIsReturningToService(true);
+    setMessage(null);
+
+    try {
+      await returnEquipmentToService({
+        equipmentId: equipment.id,
+        publicSlug: equipment.publicSlug,
+      });
+      setEquipment({ ...equipment, status: "green" });
+      setMessage("Equipment returned to service.");
+    } catch {
+      setMessage("Equipment could not be returned to service.");
+    } finally {
+      setIsReturningToService(false);
     }
   }
 
@@ -144,6 +176,11 @@ export function EquipmentDetailClient({ equipmentId }: { equipmentId: string }) 
             label="Public page"
             value={equipment.publicVisible ? "Enabled" : "Hidden"}
           />
+          <InfoTile
+            icon={<AlertTriangle className="h-4 w-4" />}
+            label="Availability"
+            value={equipment.status === "red" ? "Out of order" : "In service"}
+          />
         </div>
 
         {equipment.description ? (
@@ -180,6 +217,25 @@ export function EquipmentDetailClient({ equipmentId }: { equipmentId: string }) 
                 Archive
               </Button>
             </>
+          ) : null}
+          {can(user, "mark_out_of_order") && equipment.status !== "red" ? (
+            <Button asChild variant="ghost">
+              <Link href={`/app/equipment/${equipment.id}/out-of-order`}>
+                <AlertTriangle className="h-4 w-4" />
+                Out of order
+              </Link>
+            </Button>
+          ) : null}
+          {can(user, "return_to_service") && equipment.status === "red" ? (
+            <Button
+              disabled={isReturningToService}
+              onClick={() => void handleReturnToService()}
+              type="button"
+              variant="secondary"
+            >
+              <RotateCcw className="h-4 w-4" />
+              {isReturningToService ? "Returning" : "Return to service"}
+            </Button>
           ) : null}
         </div>
       </PremiumCard>
