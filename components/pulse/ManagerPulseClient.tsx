@@ -22,17 +22,23 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { StatusRing } from "@/components/status/StatusRing";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth/AuthProvider";
+import { toActivityCardItem } from "@/lib/activity/feed";
+import { getFacilityActivityFeed } from "@/lib/db/activity";
 import { getFacilityEquipment } from "@/lib/db/equipment";
 import { getFacilityLocations } from "@/lib/db/facilities";
 import { getFacilityIssues } from "@/lib/db/issues";
+import { getFacilitySpotChecks } from "@/lib/db/spot-checks";
 import { getFacilityTaskInstances } from "@/lib/db/tasks";
 import { getIssueTone, isIssueOpen, issuePriorityLabels } from "@/lib/issues/labels";
 import { getPulseSummary, isTaskOverdue } from "@/lib/pulse/summary";
+import { spotCheckStatusLabels } from "@/lib/spot-checks/labels";
 import { formatTaskDueLabel } from "@/lib/tasks/labels";
 import type { Equipment } from "@/types/equipment";
 import type { FacilityLocation } from "@/types/facility";
 import type { ManagedIssue } from "@/types/issue";
+import type { SpotCheck } from "@/types/spot-check";
 import type { CareTaskInstance } from "@/types/task";
+import type { ActivityFeedItem } from "@/types/activity";
 
 type AttentionItemData = {
   href: string;
@@ -48,7 +54,9 @@ export function ManagerPulseClient() {
   const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [issues, setIssues] = useState<ManagedIssue[]>([]);
   const [locations, setLocations] = useState<FacilityLocation[]>([]);
+  const [spotChecks, setSpotChecks] = useState<SpotCheck[]>([]);
   const [tasks, setTasks] = useState<CareTaskInstance[]>([]);
+  const [activity, setActivity] = useState<ActivityFeedItem[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -64,11 +72,20 @@ export function ManagerPulseClient() {
       setMessage(null);
 
       try {
-        const [equipmentRecords, issueRecords, locationRecords, taskRecords] =
+        const [
+          activityRecords,
+          equipmentRecords,
+          issueRecords,
+          locationRecords,
+          spotCheckRecords,
+          taskRecords,
+        ] =
           await Promise.all([
+            getFacilityActivityFeed(user.facilityId),
             getFacilityEquipment(user.facilityId),
             getFacilityIssues(user.facilityId),
             getFacilityLocations(user.facilityId),
+            getFacilitySpotChecks(user.facilityId),
             getFacilityTaskInstances(user.facilityId),
           ]);
 
@@ -76,9 +93,11 @@ export function ManagerPulseClient() {
           return;
         }
 
+        setActivity(activityRecords);
         setEquipment(equipmentRecords);
         setIssues(issueRecords);
         setLocations(locationRecords);
+        setSpotChecks(spotCheckRecords);
         setTasks(taskRecords);
       } catch {
         if (isMounted) {
@@ -122,6 +141,16 @@ export function ManagerPulseClient() {
     () => tasks.filter((task) => isTaskOverdue(task)),
     [tasks],
   );
+  const failedSpotChecks = useMemo(
+    () =>
+      spotChecks.filter(
+        (spotCheck) =>
+          spotCheck.status === "failed" ||
+          spotCheck.status === "escalated" ||
+          spotCheck.status === "recheck_required",
+      ),
+    [spotChecks],
+  );
   const attentionItems = useMemo(
     () =>
       [
@@ -156,44 +185,29 @@ export function ManagerPulseClient() {
           tone: "amber" as const,
           type: "Task",
         })),
+        ...failedSpotChecks.slice(0, 3).map((spotCheck) => ({
+          href: "/app/spot-checks",
+          id: `spot-check-${spotCheck.id}`,
+          meta: `${equipmentNames.get(spotCheck.equipmentId) ?? "Equipment"} · ${
+            spotCheckStatusLabels[spotCheck.status]
+          }`,
+          title: "Spot check needs attention",
+          tone: spotCheck.status === "recheck_required" ? ("amber" as const) : ("red" as const),
+          type: "Spot check",
+        })),
       ].slice(0, 6),
-    [equipmentNames, locationNames, openIssues, outOfOrderEquipment, overdueTasks],
+    [
+      equipmentNames,
+      failedSpotChecks,
+      locationNames,
+      openIssues,
+      outOfOrderEquipment,
+      overdueTasks,
+    ],
   );
   const feedItems = useMemo(
-    () =>
-      [
-        ...tasks
-          .filter((task) => task.status === "completed")
-          .map((task) => ({
-            createdAt: task.completedAt || task.updatedAt,
-            icon: CheckCircle2,
-            id: `completed-${task.id}`,
-            meta: equipmentNames.get(task.equipmentId) ?? "Equipment",
-            title: `Completed ${task.title}`,
-            tone: "green" as const,
-          })),
-        ...issues.map((issue) => ({
-          createdAt: issue.updatedAt || issue.createdAt,
-          icon: AlertTriangle,
-          id: `issue-${issue.id}`,
-          meta: `${issuePriorityLabels[issue.priority]} priority`,
-          title: `${isIssueOpen(issue.status) ? "Open" : "Resolved"} issue on ${
-            equipmentNames.get(issue.equipmentId) ?? "equipment"
-          }`,
-          tone: getIssueTone(issue.status, issue.priority),
-        })),
-        ...outOfOrderEquipment.map((item) => ({
-          createdAt: item.updatedAt,
-          icon: ShieldAlert,
-          id: `out-of-order-${item.id}`,
-          meta: locationNames.get(item.locationId) ?? "Facility area",
-          title: `${item.name} is out of order`,
-          tone: "red" as const,
-        })),
-      ]
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-        .slice(0, 6),
-    [equipmentNames, issues, locationNames, outOfOrderEquipment, tasks],
+    () => activity.slice(0, 6).map(toActivityCardItem),
+    [activity],
   );
 
   return (
@@ -296,6 +310,18 @@ export function ManagerPulseClient() {
           }))}
           title="Overdue Tasks"
         />
+        <PulseList
+          actionHref="/app/spot-checks"
+          actionLabel="Review"
+          empty="No failed spot checks."
+          icon={ClipboardCheck}
+          items={failedSpotChecks.slice(0, 4).map((spotCheck) => ({
+            href: "/app/spot-checks",
+            meta: spotCheckStatusLabels[spotCheck.status],
+            title: equipmentNames.get(spotCheck.equipmentId) ?? "Spot check",
+          }))}
+          title="Spot Checks"
+        />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
@@ -321,11 +347,6 @@ export function ManagerPulseClient() {
             icon={Wrench}
             label="Equipment at Risk"
             title="Replacement intelligence placeholder"
-          />
-          <PlaceholderInsight
-            icon={ClipboardCheck}
-            label="Spot Checks"
-            title="Manager assurance arrives next"
           />
           <PlaceholderInsight icon={Bot} label="AI Insights" title="Pattern detection coming soon" />
         </div>

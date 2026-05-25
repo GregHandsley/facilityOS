@@ -2,7 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import { PremiumCard } from "@/components/cards/PremiumCard";
 import { cn } from "@/lib/utils";
 
-type ActivityTone = "green" | "amber" | "red" | "ice";
+export type ActivityTone = "green" | "amber" | "red" | "ice";
 
 const toneClasses: Record<ActivityTone, string> = {
   green: "bg-facility-green/15 text-facility-green",

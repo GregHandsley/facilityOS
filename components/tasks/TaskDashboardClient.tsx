@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { CalendarCheck, CheckCircle2, ClipboardList, Plus, Wrench } from "lucide-react";
+import { ActivityFeedCard } from "@/components/cards/ActivityFeedCard";
 import { useAuth } from "@/lib/auth/AuthProvider";
+import { toActivityCardItem } from "@/lib/activity/feed";
+import { getFacilityActivityFeed } from "@/lib/db/activity";
 import { getFacilityEquipment } from "@/lib/db/equipment";
 import { getFacilityLocations } from "@/lib/db/facilities";
 import {
@@ -27,6 +30,7 @@ import {
 } from "@/lib/tasks/labels";
 import type { Equipment } from "@/types/equipment";
 import type { FacilityLocation } from "@/types/facility";
+import type { ActivityFeedItem } from "@/types/activity";
 import type {
   CareTaskCategory,
   CareTaskFrequency,
@@ -69,6 +73,7 @@ const emptyScheduleForm: ScheduleForm = {
 export function TaskDashboardClient() {
   const { user } = useAuth();
   const [tasks, setTasks] = useState<CareTaskInstance[]>([]);
+  const [activity, setActivity] = useState<ActivityFeedItem[]>([]);
   const [schedules, setSchedules] = useState<CareTaskSchedule[]>([]);
   const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [locations, setLocations] = useState<FacilityLocation[]>([]);
@@ -86,8 +91,15 @@ export function TaskDashboardClient() {
       }
 
       try {
-        const [taskRecords, scheduleRecords, equipmentRecords, locationRecords] =
+        const [
+          activityRecords,
+          taskRecords,
+          scheduleRecords,
+          equipmentRecords,
+          locationRecords,
+        ] =
           await Promise.all([
+            getFacilityActivityFeed(user.facilityId, 8),
             getFacilityTaskInstances(user.facilityId),
             getFacilityCareSchedules(user.facilityId),
             getFacilityEquipment(user.facilityId),
@@ -99,6 +111,7 @@ export function TaskDashboardClient() {
         }
 
         const activeLocations = locationRecords.filter((location) => !location.archived);
+        setActivity(activityRecords);
         setTasks(taskRecords);
         setSchedules(scheduleRecords);
         setEquipment(equipmentRecords);
@@ -356,6 +369,23 @@ export function TaskDashboardClient() {
           description="Managers can create schedules to generate staff care tasks for equipment, rooms and areas."
         />
       )}
+
+      <ActivityFeedCard
+        title="Recent Activity"
+        items={
+          activity.length > 0
+            ? activity.slice(0, 6).map(toActivityCardItem)
+            : [
+                {
+                  id: "empty-task-activity",
+                  icon: ClipboardList,
+                  meta: "Task completions, reports and status changes",
+                  title: "Facility activity will appear here",
+                  tone: "ice",
+                },
+              ]
+        }
+      />
     </section>
   );
 }

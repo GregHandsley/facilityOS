@@ -170,6 +170,129 @@ service cloud.firestore {
         && request.resource.data.publicStatus == "green";
     }
 
+    function activityFieldsAreValid() {
+      return request.resource.data.keys().hasOnly([
+        "id",
+        "facilityId",
+        "locationId",
+        "equipmentId",
+        "taskId",
+        "issueId",
+        "type",
+        "title",
+        "meta",
+        "actorId",
+        "actorName",
+        "actorRole",
+        "managerOnly",
+        "createdAt"
+      ])
+      && request.resource.data.id == request.resource.id
+      && request.resource.data.facilityId is string
+      && request.resource.data.locationId is string
+      && request.resource.data.equipmentId is string
+      && request.resource.data.taskId is string
+      && request.resource.data.issueId is string
+      && request.resource.data.title is string
+      && request.resource.data.meta is string
+      && request.resource.data.actorId is string
+      && request.resource.data.actorName is string
+      && request.resource.data.actorRole in ["public", "staff", "manager", "system"]
+      && request.resource.data.managerOnly is bool
+      && request.resource.data.type in [
+        "equipment_created",
+        "task_completed",
+        "fault_reported",
+        "issue_status_changed",
+        "equipment_marked_out_of_order",
+        "equipment_returned_to_service",
+        "spot_check_completed",
+        "ai_insight_created"
+      ];
+    }
+
+    function isPublicFaultActivityCreate() {
+      let issue = get(/databases/$(database)/documents/issues/$(request.resource.data.issueId));
+
+      return activityFieldsAreValid()
+        && request.resource.data.type == "fault_reported"
+        && request.resource.data.actorRole == "public"
+        && request.resource.data.actorId == ""
+        && request.resource.data.actorName == "Public user"
+        && request.resource.data.managerOnly == false
+        && request.resource.data.taskId == ""
+        && issue.data.reporterType == "public"
+        && issue.data.facilityId == request.resource.data.facilityId
+        && issue.data.locationId == request.resource.data.locationId
+        && issue.data.equipmentId == request.resource.data.equipmentId
+        && issue.data.id == request.resource.data.issueId;
+    }
+
+    function spotCheckFieldsAreValid() {
+      return request.resource.data.keys().hasOnly([
+        "id",
+        "facilityId",
+        "locationId",
+        "equipmentId",
+        "taskId",
+        "staffUserId",
+        "status",
+        "sampleReason",
+        "managerNote",
+        "reviewedBy",
+        "reviewedAt",
+        "createdAt",
+        "updatedAt"
+      ])
+      && request.resource.data.id == request.resource.id
+      && request.resource.data.status in [
+        "pending",
+        "passed",
+        "failed",
+        "recheck_required",
+        "escalated"
+      ];
+    }
+
+    function generatedSpotCheckCreate() {
+      let task = get(/databases/$(database)/documents/careTaskInstances/$(request.resource.data.taskId));
+
+      return spotCheckFieldsAreValid()
+        && staffForFacility(request.resource.data.facilityId)
+        && request.resource.data.status == "pending"
+        && request.resource.data.managerNote == ""
+        && request.resource.data.reviewedBy == ""
+        && request.resource.data.reviewedAt == ""
+        && task.data.facilityId == request.resource.data.facilityId
+        && task.data.locationId == request.resource.data.locationId
+        && task.data.equipmentId == request.resource.data.equipmentId
+        && task.data.completedBy == request.auth.uid
+        && task.data.status == "completed"
+        && request.resource.data.staffUserId == request.auth.uid;
+    }
+
+    function samplingStateFieldsAreValid() {
+      return request.resource.data.keys().hasOnly([
+        "id",
+        "facilityId",
+        "scope",
+        "scopeId",
+        "confidence",
+        "sampleRate",
+        "passedChecks",
+        "failedChecks",
+        "totalReviewed",
+        "explanation",
+        "updatedAt"
+      ])
+      && request.resource.data.id == request.resource.id
+      && request.resource.data.scope in ["facility", "location", "staff", "category"]
+      && request.resource.data.confidence in ["green", "amber", "red"]
+      && request.resource.data.sampleRate is number
+      && request.resource.data.sampleRate >= 0.05
+      && request.resource.data.sampleRate <= 0.6;
+    }
+
     match /users/{userId} {
       allow create: if signedIn()
         && request.auth.uid == userId
@@ -392,8 +515,27 @@ service cloud.firestore {
         || staffForFacility(resource.data.facilityId)
           && resource.data.staffUserId == request.auth.uid
           && resource.data.status == "recheck_required";
-      allow create, update: if managerForFacility(request.resource.data.facilityId)
+      allow create: if generatedSpotCheckCreate()
+        || managerForFacility(request.resource.data.facilityId)
+          && spotCheckFieldsAreValid()
+          && request.resource.data.reviewedBy != request.resource.data.staffUserId;
+      allow update: if managerForFacility(resource.data.facilityId)
+        && spotCheckFieldsAreValid()
+        && request.resource.data.facilityId == resource.data.facilityId
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.locationId == resource.data.locationId
+        && request.resource.data.equipmentId == resource.data.equipmentId
+        && request.resource.data.taskId == resource.data.taskId
+        && request.resource.data.staffUserId == resource.data.staffUserId
+        && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.reviewedBy != request.resource.data.staffUserId;
+      allow delete: if false;
+    }
+
+    match /samplingStates/{stateId} {
+      allow read: if managerForFacility(resource.data.facilityId);
+      allow create, update: if managerForFacility(request.resource.data.facilityId)
+        && samplingStateFieldsAreValid();
       allow delete: if false;
     }
 
@@ -416,7 +558,11 @@ service cloud.firestore {
     match /activityFeedItems/{activityId} {
       allow read: if teamForFacility(resource.data.facilityId)
         && (resource.data.managerOnly != true || isManager());
-      allow create: if teamForFacility(request.resource.data.facilityId);
+      allow create: if (
+          activityFieldsAreValid()
+          && teamForFacility(request.resource.data.facilityId)
+        )
+        || isPublicFaultActivityCreate();
       allow update, delete: if false;
     }
 

@@ -6,6 +6,7 @@ import { Box, Plus } from "lucide-react";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { getFacilityEquipment } from "@/lib/db/equipment";
 import { getFacilityLocations } from "@/lib/db/facilities";
+import { getProxiedImageUrl } from "@/lib/images/proxy";
 import { can } from "@/lib/rbac/can";
 import type { Equipment } from "@/types/equipment";
 import type { FacilityLocation } from "@/types/facility";
@@ -126,13 +127,15 @@ export function EquipmentListClient() {
 }
 
 function EquipmentImage({ imageUrl, name }: { imageUrl: string; name: string }) {
-  if (imageUrl) {
+  const proxiedImageUrl = getProxiedImageUrl(imageUrl);
+
+  if (proxiedImageUrl) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
         alt={name}
         className="h-24 w-24 shrink-0 rounded-2xl object-cover"
-        src={imageUrl}
+        src={proxiedImageUrl}
       />
     );
   }

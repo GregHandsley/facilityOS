@@ -24,6 +24,9 @@ export default function ManagerPulsePage() {
               <Link href="/app/issues">Issues</Link>
             </Button>
             <Button asChild variant="secondary">
+              <Link href="/app/spot-checks">Spot checks</Link>
+            </Button>
+            <Button asChild variant="secondary">
               <Link href="/app/settings">Settings</Link>
             </Button>
             <LogoutButton />

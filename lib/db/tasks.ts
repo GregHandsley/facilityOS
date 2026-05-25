@@ -9,7 +9,14 @@ import {
   where,
 } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+import { tryCreateActivityFeedItem } from "@/lib/db/activity";
+import { getSamplingStatesForTask } from "@/lib/db/sampling";
+import { createSpotCheckForTask } from "@/lib/db/spot-checks";
 import { firestore, firebaseStorage } from "@/lib/firebase/client";
+import {
+  getEffectiveSamplingState,
+  shouldGenerateSpotCheck,
+} from "@/lib/spot-checks/sampling";
 import { getEvidenceValidationError } from "@/lib/tasks/evidence";
 import type {
   CareTaskInstance,
@@ -161,7 +168,37 @@ export async function updateTaskStatus({
   await updateDoc(doc(firestore, "careTaskInstances", task.id), updates);
 
   if (status === "completed") {
+    const completedTask = {
+      ...task,
+      ...updates,
+    };
+
     await updateEquipmentCareSummary(task, now);
+    await tryCreateActivityFeedItem({
+      actorId: completedBy,
+      actorName: "Staff member",
+      actorRole: "staff",
+      equipmentId: task.equipmentId,
+      facilityId: task.facilityId,
+      issueId: "",
+      locationId: task.locationId,
+      managerOnly: false,
+      meta: task.category,
+      taskId: task.id,
+      title: `${task.title} completed`,
+      type: "task_completed",
+    });
+
+    const samplingStates = await getSamplingStatesForTask(completedTask);
+    const effectiveSamplingState = getEffectiveSamplingState(samplingStates);
+
+    if (shouldGenerateSpotCheck(completedTask, new Date(), effectiveSamplingState)) {
+      try {
+        await createSpotCheckForTask(completedTask);
+      } catch {
+        // Spot checks are an assurance layer. Task completion must not fail if sampling cannot be written.
+      }
+    }
   }
 
   return {

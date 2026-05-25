@@ -1,5 +1,6 @@
 import { collection, doc, setDoc, updateDoc } from "firebase/firestore";
 import { ref, uploadBytes } from "firebase/storage";
+import { tryCreateActivityFeedItem } from "@/lib/db/activity";
 import { firestore, firebaseStorage } from "@/lib/firebase/client";
 import { getPublicStatusCopy } from "@/lib/equipment/public-status";
 import { getIssuePriorityForOutOfOrder } from "@/lib/out-of-order/labels";
@@ -68,15 +69,33 @@ export async function createOutOfOrderEvent(input: CreateOutOfOrderInput) {
     publicStatus: "red",
     publicStatusCopy: getPublicStatusCopy("red"),
   });
+  await tryCreateActivityFeedItem({
+    actorId: input.createdBy,
+    actorName: "Staff member",
+    actorRole: "staff",
+    equipmentId: input.equipmentId,
+    facilityId: input.facilityId,
+    issueId: issue.id,
+    locationId: input.locationId,
+    managerOnly: false,
+    meta: input.severity,
+    taskId: "",
+    title: "Equipment marked out of order",
+    type: "equipment_marked_out_of_order",
+  });
 
   return { event, issue };
 }
 
 export async function returnEquipmentToService({
+  facilityId,
   equipmentId,
+  locationId,
   publicSlug,
 }: {
+  facilityId: string;
   equipmentId: string;
+  locationId: string;
   publicSlug: string;
 }) {
   const now = new Date().toISOString();
@@ -89,6 +108,20 @@ export async function returnEquipmentToService({
     outOfOrderMessage: "",
     publicStatus: "green",
     publicStatusCopy: getPublicStatusCopy("green"),
+  });
+  await tryCreateActivityFeedItem({
+    actorId: "",
+    actorName: "Manager",
+    actorRole: "manager",
+    equipmentId,
+    facilityId,
+    issueId: "",
+    locationId,
+    managerOnly: false,
+    meta: "Returned to service",
+    taskId: "",
+    title: "Equipment returned to service",
+    type: "equipment_returned_to_service",
   });
 }
 

@@ -37,9 +37,19 @@ describe("Firestore security rules", () => {
   });
 
   it("prevents staff from approving their own spot checks", () => {
+    expect(firestoreRules).toContain("match /spotChecks/{spotCheckId}");
+    expect(firestoreRules).toContain("function generatedSpotCheckCreate()");
+    expect(firestoreRules).toContain("function spotCheckFieldsAreValid()");
     expect(firestoreRules).toContain(
       "request.resource.data.reviewedBy != request.resource.data.staffUserId",
     );
+  });
+
+  it("keeps adaptive sampling state manager controlled", () => {
+    expect(firestoreRules).toContain("match /samplingStates/{stateId}");
+    expect(firestoreRules).toContain("function samplingStateFieldsAreValid()");
+    expect(firestoreRules).toContain("request.resource.data.sampleRate <= 0.6");
+    expect(firestoreRules).toContain("managerForFacility(request.resource.data.facilityId)");
   });
 
   it("limits public fault reports to safe create-only fields", () => {
@@ -87,6 +97,17 @@ describe("Firestore security rules", () => {
     expect(firestoreRules).toContain("match /outOfOrderEvents/{eventId}");
     expect(firestoreRules).toContain('"linkedIssueId"');
     expect(firestoreRules).toContain('"returnedToServiceBy"');
+  });
+
+  it("keeps activity feed scoped and blocks manager-only items from staff", () => {
+    expect(firestoreRules).toContain("match /activityFeedItems/{activityId}");
+    expect(firestoreRules).toContain("function activityFieldsAreValid()");
+    expect(firestoreRules).toContain("function isPublicFaultActivityCreate()");
+    expect(firestoreRules).toContain(
+      "resource.data.managerOnly != true || isManager()",
+    );
+    expect(firestoreRules).toContain('"fault_reported"');
+    expect(firestoreRules).toContain('"actorRole"');
   });
 });
 

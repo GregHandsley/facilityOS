@@ -8,6 +8,7 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
+import { tryCreateActivityFeedItem } from "@/lib/db/activity";
 import { firestore } from "@/lib/firebase/client";
 import { getPublicStatusCopy } from "@/lib/equipment/public-status";
 import { createEquipmentSlug } from "@/lib/equipment/slug";
@@ -105,6 +106,20 @@ export async function createEquipment(input: CreateEquipmentInput) {
 
   await setDoc(equipmentRef, equipment);
   await upsertPublicEquipmentSummary(equipment);
+  await tryCreateActivityFeedItem({
+    actorId: "",
+    actorName: "Manager",
+    actorRole: "manager",
+    equipmentId: equipment.id,
+    facilityId: equipment.facilityId,
+    issueId: "",
+    locationId: equipment.locationId,
+    managerOnly: false,
+    meta: equipment.equipmentType || "Equipment profile",
+    taskId: "",
+    title: `${equipment.name} was added`,
+    type: "equipment_created",
+  });
 
   return equipment;
 }

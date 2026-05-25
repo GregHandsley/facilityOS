@@ -9,6 +9,7 @@ import {
   MapPin,
   ShieldCheck,
 } from "lucide-react";
+import { getProxiedImageUrl } from "@/lib/images/proxy";
 import type { PublicEquipmentStatus } from "@/types/equipment";
 import { PremiumCard } from "@/components/cards/PremiumCard";
 import { StatusBadge } from "@/components/status/StatusBadge";
@@ -113,11 +114,13 @@ function EquipmentImage({
   imageUrl: string;
   name: string;
 }) {
+  const proxiedImageUrl = getProxiedImageUrl(imageUrl);
+
   return (
     <div className="relative flex h-24 w-24 shrink-0 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] sm:h-28 sm:w-28">
-      {imageUrl ? (
+      {proxiedImageUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img alt={name} className="h-full w-full object-cover" src={imageUrl} />
+        <img alt={name} className="h-full w-full object-cover" src={proxiedImageUrl} />
       ) : (
         <div className="flex h-full w-full items-center justify-center text-facility-green">
           <Box className="h-9 w-9" />

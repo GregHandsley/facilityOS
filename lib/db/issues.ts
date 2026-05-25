@@ -9,6 +9,7 @@ import {
   where,
 } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+import { tryCreateActivityFeedItem } from "@/lib/db/activity";
 import { firestore, firebaseStorage } from "@/lib/firebase/client";
 import {
   createPublicIssueReport,
@@ -43,6 +44,20 @@ export async function createPublicFaultReport(input: PublicIssueReportInput) {
   await updateDoc(doc(firestore, "publicEquipment", input.publicSlug), {
     hasActivePublicFault: true,
   });
+  await tryCreateActivityFeedItem({
+    actorId: "",
+    actorName: "Public user",
+    actorRole: "public",
+    equipmentId: input.equipmentId,
+    facilityId: input.facilityId,
+    issueId: issue.id,
+    locationId: input.locationId,
+    managerOnly: false,
+    meta: issue.category.replaceAll("_", " "),
+    taskId: "",
+    title: "New public fault reported",
+    type: "fault_reported",
+  });
 
   return issue;
 }
@@ -69,6 +84,20 @@ export async function createPublicFaultReportWithId({
   await setDoc(doc(firestore, "issues", id), issue);
   await updateDoc(doc(firestore, "publicEquipment", input.publicSlug), {
     hasActivePublicFault: true,
+  });
+  await tryCreateActivityFeedItem({
+    actorId: "",
+    actorName: "Public user",
+    actorRole: "public",
+    equipmentId: input.equipmentId,
+    facilityId: input.facilityId,
+    issueId: issue.id,
+    locationId: input.locationId,
+    managerOnly: false,
+    meta: issue.category.replaceAll("_", " "),
+    taskId: "",
+    title: "New public fault reported",
+    type: "fault_reported",
   });
 
   return issue;
@@ -143,6 +172,20 @@ export async function updateIssueManagement(input: {
       hasActivePublicFault: true,
     });
   }
+  await tryCreateActivityFeedItem({
+    actorId: "",
+    actorName: "Manager",
+    actorRole: "manager",
+    equipmentId: input.issue.equipmentId,
+    facilityId: input.issue.facilityId,
+    issueId: input.issue.id,
+    locationId: input.issue.locationId,
+    managerOnly: false,
+    meta: `${input.issue.status} to ${input.status}`,
+    taskId: "",
+    title: "Issue status changed",
+    type: "issue_status_changed",
+  });
 
   return {
     ...input.issue,
