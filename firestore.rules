@@ -1,0 +1,358 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function hasUserProfile() {
+      return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userRole() {
+      return userDoc().data.role;
+    }
+
+    function userFacilityId() {
+      return userDoc().data.facilityId;
+    }
+
+    function isStaff() {
+      return hasUserProfile() && userRole() == "staff";
+    }
+
+    function isManager() {
+      return hasUserProfile() && userRole() == "manager";
+    }
+
+    function belongsToFacility(facilityId) {
+      return hasUserProfile() && userFacilityId() == facilityId;
+    }
+
+    function managerForFacility(facilityId) {
+      return isManager() && belongsToFacility(facilityId);
+    }
+
+    function staffForFacility(facilityId) {
+      return isStaff() && belongsToFacility(facilityId);
+    }
+
+    function teamForFacility(facilityId) {
+      return (isStaff() || isManager()) && belongsToFacility(facilityId);
+    }
+
+    function isPublicEquipmentRead() {
+      return resource.data.publicVisible == true
+        && resource.data.archived != true
+        && resource.data.keys().hasOnly([
+          "id",
+          "facilityId",
+          "locationId",
+          "publicSlug",
+          "publicVisible",
+          "publicName",
+          "publicImageUrl",
+          "publicLocationName",
+          "publicStatus",
+          "publicStatusCopy",
+          "publicManufacturer",
+          "publicModel",
+          "showLastCleaned",
+          "showLastMaintained",
+          "showLastInspected",
+          "lastCleanedAt",
+          "lastMaintainedAt",
+          "lastInspectedAt",
+          "hasActivePublicFault",
+          "outOfOrderMessage",
+          "archived"
+        ]);
+    }
+
+    function isPublicFaultCreate() {
+      let publicEquipment = get(/databases/$(database)/documents/publicEquipment/$(request.resource.data.publicSlug));
+
+      return publicEquipment.data.publicVisible == true
+        && publicEquipment.data.archived != true
+        && publicEquipment.data.facilityId == request.resource.data.facilityId
+        && publicEquipment.data.locationId == request.resource.data.locationId
+        && publicEquipment.data.equipmentId == request.resource.data.equipmentId
+        && request.resource.data.reporterType == "public"
+        && request.resource.data.status == "new"
+        && request.resource.data.priority == "medium"
+        && request.resource.data.keys().hasOnly([
+          "id",
+          "facilityId",
+          "locationId",
+          "equipmentId",
+          "publicSlug",
+          "category",
+          "description",
+          "photoUrl",
+          "contactEmail",
+          "reporterType",
+          "status",
+          "priority",
+          "createdAt"
+        ]);
+    }
+
+    function isPublicFaultStateUpdate() {
+      return resource.data.publicVisible == true
+        && resource.data.archived != true
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "hasActivePublicFault"
+        ])
+        && request.resource.data.hasActivePublicFault == true;
+    }
+
+    match /users/{userId} {
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.role == "staff"
+        && request.resource.data.facilityId is string;
+
+      allow read: if signedIn()
+        && (
+          request.auth.uid == userId
+          || managerForFacility(resource.data.facilityId)
+        );
+
+      allow update: if signedIn()
+        && (
+          request.auth.uid == userId
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["lastLoginAt"])
+          || managerForFacility(resource.data.facilityId)
+            && request.resource.data.facilityId == resource.data.facilityId
+        );
+
+      allow delete: if false;
+    }
+
+    match /facilities/{facilityId} {
+      allow read: if teamForFacility(facilityId);
+      allow create, update: if managerForFacility(facilityId);
+      allow delete: if false;
+    }
+
+    match /locations/{locationId} {
+      allow read: if teamForFacility(resource.data.facilityId);
+      allow create: if managerForFacility(request.resource.data.facilityId);
+      allow update: if managerForFacility(resource.data.facilityId)
+        && request.resource.data.facilityId == resource.data.facilityId
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.publicSlug == resource.data.publicSlug
+        && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if false;
+    }
+
+    match /equipment/{equipmentId} {
+      allow read: if teamForFacility(resource.data.facilityId) || isPublicEquipmentRead();
+      allow create: if managerForFacility(request.resource.data.facilityId)
+        && request.resource.data.keys().hasOnly([
+          "id",
+          "facilityId",
+          "locationId",
+          "name",
+          "manufacturer",
+          "model",
+          "equipmentType",
+          "equipmentNumber",
+          "description",
+          "imageUrl",
+          "publicSlug",
+          "publicVisible",
+          "status",
+          "archived",
+          "createdAt",
+          "updatedAt"
+        ])
+        && request.resource.data.status == "green"
+        && request.resource.data.archived == false;
+      allow update: if managerForFacility(resource.data.facilityId)
+        && request.resource.data.facilityId == resource.data.facilityId;
+      allow delete: if false;
+    }
+
+    match /publicEquipment/{slug} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if managerForFacility(request.resource.data.facilityId)
+        && request.resource.data.keys().hasOnly([
+          "id",
+          "facilityId",
+          "locationId",
+          "equipmentId",
+          "publicSlug",
+          "publicVisible",
+          "publicName",
+          "publicImageUrl",
+          "publicLocationName",
+          "publicStatus",
+          "publicStatusCopy",
+          "publicManufacturer",
+          "publicModel",
+          "showLastCleaned",
+          "showLastMaintained",
+          "showLastInspected",
+          "lastCleanedAt",
+          "lastMaintainedAt",
+          "lastInspectedAt",
+          "hasActivePublicFault",
+          "outOfOrderMessage",
+          "archived"
+        ]);
+      allow update: if managerForFacility(request.resource.data.facilityId)
+        && request.resource.data.keys().hasOnly([
+          "id",
+          "facilityId",
+          "locationId",
+          "equipmentId",
+          "publicSlug",
+          "publicVisible",
+          "publicName",
+          "publicImageUrl",
+          "publicLocationName",
+          "publicStatus",
+          "publicStatusCopy",
+          "publicManufacturer",
+          "publicModel",
+          "showLastCleaned",
+          "showLastMaintained",
+          "showLastInspected",
+          "lastCleanedAt",
+          "lastMaintainedAt",
+          "lastInspectedAt",
+          "hasActivePublicFault",
+          "outOfOrderMessage",
+          "archived"
+        ])
+        || isPublicFaultStateUpdate();
+      allow delete: if false;
+    }
+
+    match /issues/{issueId} {
+      allow create: if isPublicFaultCreate()
+        || teamForFacility(request.resource.data.facilityId);
+      allow read: if teamForFacility(resource.data.facilityId);
+      allow update: if managerForFacility(resource.data.facilityId)
+        && request.resource.data.facilityId == resource.data.facilityId
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.equipmentId == resource.data.equipmentId
+        && request.resource.data.locationId == resource.data.locationId
+        && request.resource.data.publicSlug == resource.data.publicSlug
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.keys().hasOnly([
+          "id",
+          "facilityId",
+          "locationId",
+          "equipmentId",
+          "publicSlug",
+          "category",
+          "description",
+          "photoUrl",
+          "contactEmail",
+          "reporterType",
+          "status",
+          "priority",
+          "createdAt",
+          "assignedTo",
+          "internalNotes",
+          "updatedAt",
+          "resolvedAt",
+          "closedAt"
+        ]);
+      allow delete: if false;
+    }
+
+    match /careTaskSchedules/{scheduleId} {
+      allow read: if teamForFacility(resource.data.facilityId);
+      allow create: if managerForFacility(request.resource.data.facilityId);
+      allow update: if managerForFacility(resource.data.facilityId)
+        && request.resource.data.facilityId == resource.data.facilityId;
+      allow delete: if false;
+    }
+
+    match /careTaskInstances/{taskId} {
+      allow read: if teamForFacility(resource.data.facilityId);
+      allow create: if managerForFacility(request.resource.data.facilityId);
+      allow update: if managerForFacility(resource.data.facilityId)
+        && request.resource.data.facilityId == resource.data.facilityId
+        || staffForFacility(resource.data.facilityId)
+          && request.resource.data.facilityId == resource.data.facilityId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            "status",
+            "completedAt",
+            "completedBy",
+            "evidence",
+            "note",
+            "updatedAt"
+          ]);
+      allow delete: if false;
+    }
+
+    match /outOfOrderEvents/{eventId} {
+      allow read: if teamForFacility(resource.data.facilityId);
+      allow create: if teamForFacility(request.resource.data.facilityId)
+        && request.resource.data.keys().hasOnly([
+          "id",
+          "facilityId",
+          "locationId",
+          "equipmentId",
+          "createdBy",
+          "reason",
+          "severity",
+          "photoUrl",
+          "unsafe",
+          "unavailable",
+          "note",
+          "createdAt"
+        ]);
+      allow update: if managerForFacility(resource.data.facilityId)
+        && request.resource.data.facilityId == resource.data.facilityId;
+      allow delete: if false;
+    }
+
+    match /spotChecks/{spotCheckId} {
+      allow read: if managerForFacility(resource.data.facilityId)
+        || staffForFacility(resource.data.facilityId)
+          && resource.data.staffUserId == request.auth.uid
+          && resource.data.status == "recheck_required";
+      allow create, update: if managerForFacility(request.resource.data.facilityId)
+        && request.resource.data.reviewedBy != request.resource.data.staffUserId;
+      allow delete: if false;
+    }
+
+    match /aiInsights/{insightId} {
+      allow read: if managerForFacility(resource.data.facilityId);
+      allow create: if managerForFacility(request.resource.data.facilityId);
+      allow update: if managerForFacility(resource.data.facilityId)
+        && request.resource.data.facilityId == resource.data.facilityId;
+      allow delete: if false;
+    }
+
+    match /replacementReviews/{reviewId} {
+      allow read: if managerForFacility(resource.data.facilityId);
+      allow create: if managerForFacility(request.resource.data.facilityId);
+      allow update: if managerForFacility(resource.data.facilityId)
+        && request.resource.data.facilityId == resource.data.facilityId;
+      allow delete: if false;
+    }
+
+    match /activityFeedItems/{activityId} {
+      allow read: if teamForFacility(resource.data.facilityId)
+        && (resource.data.managerOnly != true || isManager());
+      allow create: if teamForFacility(request.resource.data.facilityId);
+      allow update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
