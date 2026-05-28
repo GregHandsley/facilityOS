@@ -2,6 +2,8 @@ import { notFound } from "next/navigation";
 import { getPublicEquipmentBySlug } from "@/lib/db/equipment";
 import { PublicEquipmentStatusClient } from "@/components/public/PublicEquipmentStatusClient";
 
+export const dynamic = "force-dynamic";
+
 export default async function PublicEquipmentPage({
   params,
 }: {

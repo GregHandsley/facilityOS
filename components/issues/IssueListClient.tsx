@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Inbox, SlidersHorizontal } from "lucide-react";
 import { useAuth } from "@/lib/auth/AuthProvider";
-import { getFacilityIssues } from "@/lib/db/issues";
+import { firebaseAuth } from "@/lib/firebase/client";
+import { can } from "@/lib/rbac/can";
+import { getFacilityIssues, updateIssueAiAnalysis } from "@/lib/db/issues";
 import { getFacilityEquipment } from "@/lib/db/equipment";
 import { getFacilityLocations } from "@/lib/db/facilities";
 import {
@@ -16,7 +18,12 @@ import {
 } from "@/lib/issues/labels";
 import type { Equipment } from "@/types/equipment";
 import type { FacilityLocation } from "@/types/facility";
-import type { IssuePriority, IssueStatus, ManagedIssue } from "@/types/issue";
+import type {
+  AiIssueAnalysis,
+  IssuePriority,
+  IssueStatus,
+  ManagedIssue,
+} from "@/types/issue";
 import { PremiumCard } from "@/components/cards/PremiumCard";
 import { EmptyState } from "@/components/shared/EmptyState";
 
@@ -67,6 +74,87 @@ export function IssueListClient() {
       isMounted = false;
     };
   }, [user]);
+
+  useEffect(() => {
+    if (!user || !can(user, "view_ai_insights") || issues.length === 0) {
+      return;
+    }
+
+    const unanalyzedIssues = issues
+      .filter((issue) => isIssueOpen(issue.status) && !issue.aiAnalysis && !issue.aiError)
+      .slice(0, 3);
+
+    if (unanalyzedIssues.length === 0) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    async function analyzeOpenIssues() {
+      const token = await firebaseAuth.currentUser?.getIdToken();
+
+      if (!token) {
+        return;
+      }
+
+      for (const issue of unanalyzedIssues) {
+        if (isCancelled) {
+          return;
+        }
+
+        try {
+          const response = await fetch("/api/ai/fault-analysis", {
+            body: JSON.stringify({
+              equipmentName:
+                equipment.find((item) => item.id === issue.equipmentId)?.name ??
+                "Equipment",
+              issue,
+              locationName:
+                locations.find((location) => location.id === issue.locationId)?.name ??
+                "Facility area",
+              recentIssues: issues,
+            }),
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            method: "POST",
+          });
+
+          if (!response.ok) {
+            throw new Error("AI analysis request failed.");
+          }
+
+          const payload = (await response.json()) as { analysis?: AiIssueAnalysis };
+
+          if (!payload.analysis) {
+            throw new Error("AI analysis response was empty.");
+          }
+
+          const updatedIssue = await updateIssueAiAnalysis({
+            analysis: payload.analysis,
+            issue,
+          });
+
+          if (!isCancelled) {
+            setIssues((currentIssues) =>
+              currentIssues.map((currentIssue) =>
+                currentIssue.id === updatedIssue.id ? updatedIssue : currentIssue,
+              ),
+            );
+          }
+        } catch {
+          // Background triage should never interrupt the manager's issue list.
+        }
+      }
+    }
+
+    void analyzeOpenIssues();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [equipment, issues, locations, user]);
 
   const equipmentNames = useMemo(
     () => new Map(equipment.map((item) => [item.id, item.name])),
@@ -221,6 +309,16 @@ function IssueCard({
               <span className="rounded-full border border-white/10 bg-white/[0.05] px-3 py-1 text-muted-foreground">
                 {issuePriorityLabels[issue.priority]}
               </span>
+              {issue.aiAnalysis?.isSafetyRelated ? (
+                <span className="rounded-full border border-facility-red/20 bg-facility-red/10 px-3 py-1 text-facility-red">
+                  AI safety signal
+                </span>
+              ) : null}
+              {issue.aiAnalysis?.duplicateOrRepeat ? (
+                <span className="rounded-full border border-facility-amber/20 bg-facility-amber/10 px-3 py-1 text-facility-amber">
+                  Possible repeat
+                </span>
+              ) : null}
             </div>
           </div>
           <p className="mt-3 line-clamp-2 text-sm leading-6 text-muted-foreground">

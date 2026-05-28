@@ -1,10 +1,14 @@
 "use client";
 
 import {
+  createUserWithEmailAndPassword,
   type AuthError,
   onAuthStateChanged,
+  sendEmailVerification,
+  signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
+  updateProfile,
   type User,
 } from "firebase/auth";
 import {
@@ -26,7 +30,15 @@ type AuthContextValue = {
   status: AuthStatus;
   user: AppUser | null;
   error: string | null;
+  message: string | null;
+  signInWithEmail: (email: string, password: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
+  signUpWithEmail: (input: {
+    confirmPassword: string;
+    email: string;
+    name: string;
+    password: string;
+  }) => Promise<void>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 };
@@ -62,7 +74,16 @@ function getAuthErrorMessage(error: unknown, fallback: string) {
     case "auth/user-disabled":
       return "This account has been disabled.";
     case "auth/operation-not-allowed":
-      return "Google sign-in is not enabled in Firebase Authentication.";
+      return "This sign-in method is not enabled in Firebase Authentication.";
+    case "auth/email-already-in-use":
+      return "An account already exists for this email address.";
+    case "auth/invalid-credential":
+    case "auth/wrong-password":
+      return "The email or password is not correct.";
+    case "auth/invalid-email":
+      return "Enter a valid email address.";
+    case "auth/weak-password":
+      return "Use a stronger password with at least 6 characters.";
     case "auth/too-many-requests":
       return "Too many attempts. Wait a moment before trying again.";
     default:
@@ -70,13 +91,26 @@ function getAuthErrorMessage(error: unknown, fallback: string) {
   }
 }
 
+function requiresEmailVerification(currentUser: User) {
+  return currentUser.providerData.some((provider) => provider.providerId === "password")
+    && !currentUser.emailVerified;
+}
+
+async function sendVerificationEmail(currentUser: User) {
+  await sendEmailVerification(currentUser, {
+    url: `${window.location.origin}/login`,
+  });
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [user, setUser] = useState<AppUser | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
 
   const loadProfile = useCallback(async (currentUser: User) => {
     setError(null);
+    setMessage(null);
 
     try {
       const profile = await Promise.race([
@@ -116,6 +150,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      await currentUser.reload();
+
+      if (requiresEmailVerification(currentUser)) {
+        setUser(null);
+        setStatus("unauthenticated");
+        setError("Please verify your email address before signing in.");
+        await signOut(firebaseAuth);
+        return;
+      }
+
       await loadProfile(currentUser);
     });
 
@@ -128,6 +172,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signInWithGoogle = useCallback(async () => {
     setStatus("loading");
     setError(null);
+    setMessage(null);
 
     try {
       const result = await signInWithPopup(firebaseAuth, googleAuthProvider);
@@ -138,11 +183,97 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [loadProfile]);
 
+  const signInWithEmail = useCallback(async (email: string, password: string) => {
+    setStatus("loading");
+    setError(null);
+    setMessage(null);
+
+    try {
+      const result = await signInWithEmailAndPassword(
+        firebaseAuth,
+        email.trim(),
+        password,
+      );
+      await result.user.reload();
+
+      if (!result.user.emailVerified) {
+        await sendVerificationEmail(result.user);
+        await signOut(firebaseAuth);
+        setUser(null);
+        setStatus("unauthenticated");
+        setError(
+          "Please verify your email address before signing in. We have sent a fresh verification email.",
+        );
+        return;
+      }
+
+      await loadProfile(result.user);
+    } catch (error) {
+      setStatus("unauthenticated");
+      setError(getAuthErrorMessage(error, "Email sign-in was not completed."));
+    }
+  }, [loadProfile]);
+
+  const signUpWithEmail = useCallback(
+    async ({
+      confirmPassword,
+      email,
+      name,
+      password,
+    }: {
+      confirmPassword: string;
+      email: string;
+      name: string;
+      password: string;
+    }) => {
+      setStatus("loading");
+      setError(null);
+      setMessage(null);
+
+      if (password !== confirmPassword) {
+        setStatus("unauthenticated");
+        setError("Passwords do not match.");
+        return;
+      }
+
+      if (password.length < 8) {
+        setStatus("unauthenticated");
+        setError("Use a password with at least 8 characters.");
+        return;
+      }
+
+      try {
+        const result = await createUserWithEmailAndPassword(
+          firebaseAuth,
+          email.trim(),
+          password,
+        );
+
+        if (name.trim()) {
+          await updateProfile(result.user, { displayName: name.trim() });
+        }
+
+        await sendVerificationEmail(result.user);
+        await signOut(firebaseAuth);
+        setUser(null);
+        setStatus("unauthenticated");
+        setMessage(
+          "Account created. Check your inbox and verify your email before signing in.",
+        );
+      } catch (error) {
+        setStatus("unauthenticated");
+        setError(getAuthErrorMessage(error, "Account creation was not completed."));
+      }
+    },
+    [],
+  );
+
   const logout = useCallback(async () => {
     await signOut(firebaseAuth);
     setUser(null);
     setStatus("unauthenticated");
     setError(null);
+    setMessage(null);
   }, []);
 
   const refreshProfile = useCallback(async () => {
@@ -158,11 +289,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       status,
       user,
       error,
+      message,
+      signInWithEmail,
       signInWithGoogle,
+      signUpWithEmail,
       logout,
       refreshProfile,
     }),
-    [error, logout, refreshProfile, signInWithGoogle, status, user],
+    [
+      error,
+      logout,
+      message,
+      refreshProfile,
+      signInWithEmail,
+      signInWithGoogle,
+      signUpWithEmail,
+      status,
+      user,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

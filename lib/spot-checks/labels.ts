@@ -28,5 +28,5 @@ export function getSpotCheckTone(status: SpotCheckStatus) {
 }
 
 export function isSpotCheckOpen(status: SpotCheckStatus) {
-  return status === "pending" || status === "recheck_required";
+  return status === "pending" || status === "failed" || status === "recheck_required";
 }

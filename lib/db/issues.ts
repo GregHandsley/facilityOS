@@ -10,25 +10,20 @@ import {
 } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { tryCreateActivityFeedItem } from "@/lib/db/activity";
+import { syncEquipmentStatus } from "@/lib/db/equipment-status";
 import { firestore, firebaseStorage } from "@/lib/firebase/client";
 import {
   createPublicIssueReport,
   validatePublicIssueReport,
 } from "@/lib/issues/public-report";
 import type {
+  AiIssueAnalysis,
+  IssueCategory,
   IssuePriority,
   IssueStatus,
   ManagedIssue,
   PublicIssueReportInput,
 } from "@/types/issue";
-
-const activeIssueStatuses: IssueStatus[] = [
-  "new",
-  "acknowledged",
-  "assigned",
-  "in_progress",
-  "waiting",
-];
 
 export async function createPublicFaultReport(input: PublicIssueReportInput) {
   const validationError = validatePublicIssueReport(input);
@@ -41,9 +36,8 @@ export async function createPublicFaultReport(input: PublicIssueReportInput) {
   const issue = createPublicIssueReport(issueRef.id, input);
 
   await setDoc(issueRef, issue);
-  await updateDoc(doc(firestore, "publicEquipment", input.publicSlug), {
-    hasActivePublicFault: true,
-  });
+  await markPublicEquipmentFaultActive(input.publicSlug);
+  await syncEquipmentStatus(input.equipmentId);
   await tryCreateActivityFeedItem({
     actorId: "",
     actorName: "Public user",
@@ -82,9 +76,8 @@ export async function createPublicFaultReportWithId({
   const issue = createPublicIssueReport(id, input);
 
   await setDoc(doc(firestore, "issues", id), issue);
-  await updateDoc(doc(firestore, "publicEquipment", input.publicSlug), {
-    hasActivePublicFault: true,
-  });
+  await markPublicEquipmentFaultActive(input.publicSlug);
+  await syncEquipmentStatus(input.equipmentId);
   await tryCreateActivityFeedItem({
     actorId: "",
     actorName: "Public user",
@@ -144,6 +137,7 @@ export async function getIssue(issueId: string) {
 }
 
 export async function updateIssueManagement(input: {
+  category: IssueCategory;
   issue: ManagedIssue;
   internalNotes: string;
   priority: IssuePriority;
@@ -151,6 +145,7 @@ export async function updateIssueManagement(input: {
 }) {
   const now = new Date().toISOString();
   const updates = {
+    category: input.category,
     internalNotes: input.internalNotes.trim(),
     priority: input.priority,
     status: input.status,
@@ -161,17 +156,7 @@ export async function updateIssueManagement(input: {
 
   await updateDoc(doc(firestore, "issues", input.issue.id), updates);
 
-  if (input.status === "resolved" || input.status === "closed") {
-    await syncPublicFaultState({
-      equipmentId: input.issue.equipmentId,
-      facilityId: input.issue.facilityId,
-      publicSlug: input.issue.publicSlug,
-    });
-  } else {
-    await updateDoc(doc(firestore, "publicEquipment", input.issue.publicSlug), {
-      hasActivePublicFault: true,
-    });
-  }
+  await syncEquipmentStatus(input.issue.equipmentId);
   await tryCreateActivityFeedItem({
     actorId: "",
     actorName: "Manager",
@@ -193,6 +178,36 @@ export async function updateIssueManagement(input: {
   };
 }
 
+export async function updateIssueAiAnalysis(input: {
+  analysis?: AiIssueAnalysis;
+  error?: string;
+  issue: ManagedIssue;
+}) {
+  const now = new Date().toISOString();
+  const updates = input.analysis
+    ? {
+        aiAnalysis: input.analysis,
+        aiAnalyzedAt: now,
+        aiError: "",
+        category: input.analysis.category,
+        priority: input.analysis.priority,
+        updatedAt: now,
+      }
+      : {
+        aiAnalyzedAt: now,
+        aiError: input.error?.trim() || "Assistant review could not be generated.",
+        updatedAt: now,
+      };
+
+  await updateDoc(doc(firestore, "issues", input.issue.id), updates);
+  await syncEquipmentStatus(input.issue.equipmentId);
+
+  return {
+    ...input.issue,
+    ...updates,
+  };
+}
+
 export async function getIssuePhotoDownloadUrl(photoPath: string) {
   if (!photoPath) {
     return "";
@@ -201,24 +216,16 @@ export async function getIssuePhotoDownloadUrl(photoPath: string) {
   return getDownloadURL(ref(firebaseStorage, photoPath));
 }
 
-async function syncPublicFaultState({
-  equipmentId,
-  facilityId,
-  publicSlug,
-}: {
-  equipmentId: string;
-  facilityId: string;
-  publicSlug: string;
-}) {
-  const facilityIssues = await getFacilityIssues(facilityId);
-  const hasActivePublicFault = facilityIssues.some(
-    (issue) =>
-      issue.equipmentId === equipmentId &&
-      issue.publicSlug === publicSlug &&
-      activeIssueStatuses.includes(issue.status),
-  );
-
-  await updateDoc(doc(firestore, "publicEquipment", publicSlug), {
-    hasActivePublicFault,
-  });
+async function markPublicEquipmentFaultActive(publicSlug: string) {
+  try {
+    await updateDoc(doc(firestore, "publicEquipment", publicSlug), {
+      hasActivePublicFault: true,
+      publicStatus: "amber",
+      publicStatusCopy: "Use with awareness",
+    });
+  } catch {
+    await updateDoc(doc(firestore, "publicEquipment", publicSlug), {
+      hasActivePublicFault: true,
+    });
+  }
 }

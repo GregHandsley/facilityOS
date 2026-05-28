@@ -55,6 +55,9 @@ export type CareTaskInstance = {
   note: string;
   createdAt: string;
   updatedAt: string;
+  assignedTo?: string;
+  originalTaskId?: string;
+  sourceSpotCheckId?: string;
 };
 
 export type CreateCareScheduleInput = {

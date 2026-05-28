@@ -106,9 +106,13 @@ service cloud.firestore {
       return resource.data.publicVisible == true
         && resource.data.archived != true
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          "hasActivePublicFault"
+          "hasActivePublicFault",
+          "publicStatus",
+          "publicStatusCopy"
         ])
-        && request.resource.data.hasActivePublicFault == true;
+        && request.resource.data.hasActivePublicFault == true
+        && request.resource.data.publicStatus == "amber"
+        && request.resource.data.publicStatusCopy == "Use with awareness";
     }
 
     function isCareSummaryUpdate() {
@@ -137,6 +141,36 @@ service cloud.firestore {
           && request.resource.data.photoUrl.size() > 0;
     }
 
+    function staffCanReadTask(taskData) {
+      return staffForFacility(taskData.facilityId)
+        && (
+          !taskData.keys().hasAny(["assignedTo"])
+          || taskData.assignedTo == ""
+          || taskData.assignedTo == request.auth.uid
+        );
+    }
+
+    function staffCanCompleteTask() {
+      return staffCanReadTask(resource.data)
+        && request.resource.data.facilityId == resource.data.facilityId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "status",
+          "completedAt",
+          "completedBy",
+          "checklistCompleted",
+          "evidence",
+          "note",
+          "photoUrl",
+          "qrConfirmation",
+          "updatedAt"
+        ])
+        && (
+          request.resource.data.status != "completed"
+          || request.resource.data.completedBy == request.auth.uid
+        )
+        && taskEvidenceSatisfied();
+    }
+
     function staffMarksEquipmentOutOfOrder() {
       return teamForFacility(resource.data.facilityId)
         && request.resource.data.facilityId == resource.data.facilityId
@@ -162,10 +196,12 @@ service cloud.firestore {
     function managerReturnsPublicEquipmentToService() {
       return managerForFacility(resource.data.facilityId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "hasActivePublicFault",
           "outOfOrderMessage",
           "publicStatus",
           "publicStatusCopy"
         ])
+        && request.resource.data.hasActivePublicFault == false
         && request.resource.data.outOfOrderMessage == ""
         && request.resource.data.publicStatus == "green";
     }
@@ -226,6 +262,11 @@ service cloud.firestore {
         && issue.data.locationId == request.resource.data.locationId
         && issue.data.equipmentId == request.resource.data.equipmentId
         && issue.data.id == request.resource.data.issueId;
+    }
+
+    function activityVisibilityIsSafe() {
+      return request.resource.data.type != "spot_check_completed"
+        || request.resource.data.managerOnly == true;
     }
 
     function spotCheckFieldsAreValid() {
@@ -291,6 +332,41 @@ service cloud.firestore {
       && request.resource.data.sampleRate is number
       && request.resource.data.sampleRate >= 0.05
       && request.resource.data.sampleRate <= 0.6;
+    }
+
+    function replacementReviewFieldsAreValid(reviewId) {
+      return request.resource.data.keys().hasOnly([
+        "id",
+        "equipmentId",
+        "facilityId",
+        "state",
+        "status",
+        "score",
+        "summary",
+        "acknowledgedAt",
+        "acknowledgedBy",
+        "dismissedAt",
+        "dismissedBy",
+        "updatedAt"
+      ])
+      && request.resource.data.id == reviewId
+      && request.resource.data.equipmentId == reviewId
+      && request.resource.data.facilityId is string
+      && request.resource.data.state in ["acknowledged", "dismissed"]
+      && request.resource.data.status in [
+        "none",
+        "watch",
+        "review_recommended",
+        "high_priority_review"
+      ]
+      && request.resource.data.score is number
+      && request.resource.data.score >= 0
+      && request.resource.data.summary is string
+      && request.resource.data.acknowledgedAt is string
+      && request.resource.data.acknowledgedBy is string
+      && request.resource.data.dismissedAt is string
+      && request.resource.data.dismissedBy is string
+      && request.resource.data.updatedAt is string;
     }
 
     match /users/{userId} {
@@ -448,6 +524,9 @@ service cloud.firestore {
           "createdAt",
           "assignedTo",
           "internalNotes",
+          "aiAnalysis",
+          "aiAnalyzedAt",
+          "aiError",
           "updatedAt",
           "resolvedAt",
           "closedAt"
@@ -464,24 +543,12 @@ service cloud.firestore {
     }
 
     match /careTaskInstances/{taskId} {
-      allow read: if teamForFacility(resource.data.facilityId);
+      allow read: if managerForFacility(resource.data.facilityId)
+        || staffCanReadTask(resource.data);
       allow create: if managerForFacility(request.resource.data.facilityId);
       allow update: if managerForFacility(resource.data.facilityId)
         && request.resource.data.facilityId == resource.data.facilityId
-        || staffForFacility(resource.data.facilityId)
-          && request.resource.data.facilityId == resource.data.facilityId
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            "status",
-            "completedAt",
-            "completedBy",
-            "checklistCompleted",
-            "evidence",
-            "note",
-            "photoUrl",
-            "qrConfirmation",
-            "updatedAt"
-          ])
-          && taskEvidenceSatisfied();
+        || staffCanCompleteTask();
       allow delete: if false;
     }
 
@@ -549,9 +616,11 @@ service cloud.firestore {
 
     match /replacementReviews/{reviewId} {
       allow read: if managerForFacility(resource.data.facilityId);
-      allow create: if managerForFacility(request.resource.data.facilityId);
+      allow create: if managerForFacility(request.resource.data.facilityId)
+        && replacementReviewFieldsAreValid(reviewId);
       allow update: if managerForFacility(resource.data.facilityId)
-        && request.resource.data.facilityId == resource.data.facilityId;
+        && request.resource.data.facilityId == resource.data.facilityId
+        && replacementReviewFieldsAreValid(reviewId);
       allow delete: if false;
     }
 
@@ -561,6 +630,7 @@ service cloud.firestore {
       allow create: if (
           activityFieldsAreValid()
           && teamForFacility(request.resource.data.facilityId)
+          && activityVisibilityIsSafe()
         )
         || isPublicFaultActivityCreate();
       allow update, delete: if false;

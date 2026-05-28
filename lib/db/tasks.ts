@@ -37,6 +37,20 @@ export async function getFacilityTaskInstances(facilityId: string) {
     .sort((a, b) => a.dueAt.localeCompare(b.dueAt));
 }
 
+export async function getStaffVisibleTaskInstances(facilityId: string, staffUserId: string) {
+  const snapshot = await getDocs(
+    query(
+      collection(firestore, "careTaskInstances"),
+      where("facilityId", "==", facilityId),
+      where("assignedTo", "in", ["", staffUserId]),
+    ),
+  );
+
+  return snapshot.docs
+    .map((taskDoc) => normalizeTask(taskDoc.data() as CareTaskInstance))
+    .sort((a, b) => a.dueAt.localeCompare(b.dueAt));
+}
+
 export async function getFacilityCareSchedules(facilityId: string) {
   const snapshot = await getDocs(
     query(
@@ -96,6 +110,7 @@ export async function createCareTaskSchedule(input: CreateCareScheduleInput) {
     evidenceLevel: schedule.evidenceLevel,
     checklistItems: schedule.checklistItems,
     checklistCompleted: [],
+    assignedTo: "",
     qrConfirmation: "",
     photoUrl: "",
     status: "pending",
@@ -104,6 +119,8 @@ export async function createCareTaskSchedule(input: CreateCareScheduleInput) {
     completedBy: "",
     evidence: "",
     note: "",
+    originalTaskId: "",
+    sourceSpotCheckId: "",
     createdAt: now,
     updatedAt: now,
   };
@@ -173,7 +190,12 @@ export async function updateTaskStatus({
       ...updates,
     };
 
-    await updateEquipmentCareSummary(task, now);
+    try {
+      await updateEquipmentCareSummary(task, now);
+    } catch {
+      // Public care summaries are helpful context, but should not block task completion.
+    }
+
     await tryCreateActivityFeedItem({
       actorId: completedBy,
       actorName: "Staff member",
@@ -182,19 +204,26 @@ export async function updateTaskStatus({
       facilityId: task.facilityId,
       issueId: "",
       locationId: task.locationId,
-      managerOnly: false,
+      managerOnly: Boolean(task.sourceSpotCheckId),
       meta: task.category,
       taskId: task.id,
       title: `${task.title} completed`,
       type: "task_completed",
     });
 
-    const samplingStates = await getSamplingStatesForTask(completedTask);
-    const effectiveSamplingState = getEffectiveSamplingState(samplingStates);
+    let effectiveSamplingState: ReturnType<typeof getEffectiveSamplingState> = null;
+
+    try {
+      effectiveSamplingState = getEffectiveSamplingState(
+        await getSamplingStatesForTask(completedTask),
+      );
+    } catch {
+      // Staff can complete tasks without access to manager-controlled adaptive sampling state.
+    }
 
     if (shouldGenerateSpotCheck(completedTask, new Date(), effectiveSamplingState)) {
       try {
-        await createSpotCheckForTask(completedTask);
+        await createSpotCheckForTask(completedTask, effectiveSamplingState);
       } catch {
         // Spot checks are an assurance layer. Task completion must not fail if sampling cannot be written.
       }
@@ -279,10 +308,13 @@ function normalizeSchedule(schedule: CareTaskSchedule): CareTaskSchedule {
 function normalizeTask(task: CareTaskInstance): CareTaskInstance {
   return {
     ...task,
+    assignedTo: task.assignedTo ?? "",
     checklistCompleted: task.checklistCompleted ?? [],
     checklistItems: task.checklistItems ?? [],
     evidenceLevel: task.evidenceLevel ?? "quick",
+    originalTaskId: task.originalTaskId ?? "",
     photoUrl: task.photoUrl ?? "",
     qrConfirmation: task.qrConfirmation ?? "",
+    sourceSpotCheckId: task.sourceSpotCheckId ?? "",
   };
 }

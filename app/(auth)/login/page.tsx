@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { Dumbbell, ShieldCheck } from "lucide-react";
 import { AuthRedirect } from "@/components/auth/AuthRedirect";
 import { AuthStatusMessage } from "@/components/auth/AuthStatusMessage";
+import { EmailPasswordForm } from "@/components/auth/EmailPasswordForm";
 import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
 import { PremiumCard } from "@/components/cards/PremiumCard";
 import { AppShell } from "@/components/layout/AppShell";
@@ -24,10 +25,19 @@ export default function LoginPage() {
             Sign in to your facility workspace.
           </h1>
           <p className="mt-4 max-w-md text-sm leading-6 text-muted-foreground">
-            Sign in with your Google account to access staff and manager
-            workspaces.
+            Sign in with email and password, or use Google as an alternative.
+            New email accounts must be verified before they can access FacilityOS.
           </p>
-          <div className="mt-8">
+
+          <EmailPasswordForm />
+
+          <div className="mt-6 flex items-center gap-3">
+            <div className="h-px flex-1 bg-white/10" />
+            <span className="text-xs uppercase text-muted-foreground">or</span>
+            <div className="h-px flex-1 bg-white/10" />
+          </div>
+
+          <div className="mt-6">
             <GoogleSignInButton />
           </div>
           <AuthStatusMessage />

@@ -13,6 +13,7 @@ import {
   createCareTaskSchedule,
   getFacilityCareSchedules,
   getFacilityTaskInstances,
+  getStaffVisibleTaskInstances,
 } from "@/lib/db/tasks";
 import { can } from "@/lib/rbac/can";
 import {
@@ -81,6 +82,7 @@ export function TaskDashboardClient() {
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const canManageCarePlans = can(user, "manage_care_plans");
+  const canViewManagerPulse = can(user, "view_manager_pulse");
 
   useEffect(() => {
     let isMounted = true;
@@ -99,8 +101,12 @@ export function TaskDashboardClient() {
           locationRecords,
         ] =
           await Promise.all([
-            getFacilityActivityFeed(user.facilityId, 8),
-            getFacilityTaskInstances(user.facilityId),
+            getFacilityActivityFeed(user.facilityId, 8, {
+              includeManagerOnly: canViewManagerPulse,
+            }),
+            canViewManagerPulse
+              ? getFacilityTaskInstances(user.facilityId)
+              : getStaffVisibleTaskInstances(user.facilityId, user.id),
             getFacilityCareSchedules(user.facilityId),
             getFacilityEquipment(user.facilityId),
             getFacilityLocations(user.facilityId),
@@ -133,7 +139,7 @@ export function TaskDashboardClient() {
     return () => {
       isMounted = false;
     };
-  }, [user]);
+  }, [canViewManagerPulse, user]);
 
   const equipmentNames = useMemo(
     () => new Map(equipment.map((item) => [item.id, item.name])),
@@ -143,8 +149,11 @@ export function TaskDashboardClient() {
     () => new Map(locations.map((location) => [location.id, location.name])),
     [locations],
   );
-  const openTasks = tasks.filter((task) => task.status !== "completed");
-  const completedTasks = tasks.filter((task) => task.status === "completed");
+  const visibleTasks = canViewManagerPulse
+    ? tasks
+    : tasks.filter((task) => !task.assignedTo || task.assignedTo === user?.id);
+  const openTasks = visibleTasks.filter((task) => task.status !== "completed");
+  const completedTasks = visibleTasks.filter((task) => task.status === "completed");
 
   async function handleCreateSchedule(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -350,9 +359,9 @@ export function TaskDashboardClient() {
         </p>
       ) : null}
 
-      {tasks.length > 0 ? (
+      {visibleTasks.length > 0 ? (
         <div className="grid gap-4">
-          {tasks.map((task) => (
+          {visibleTasks.map((task) => (
             <Link href={`/app/tasks/${task.id}`} key={task.id}>
               <TaskCard
                 equipmentName={equipmentNames.get(task.equipmentId) ?? "Equipment"}
@@ -429,7 +438,7 @@ function TaskCard({
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <p className="text-sm text-muted-foreground">
-                {taskCategoryLabels[task.category]} · {locationName}
+                {task.sourceSpotCheckId ? "Rework required" : taskCategoryLabels[task.category]} · {locationName}
               </p>
               <h2 className="mt-1 text-lg font-semibold">{task.title}</h2>
               <p className="mt-1 text-sm text-muted-foreground">{equipmentName}</p>

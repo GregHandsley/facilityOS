@@ -4,9 +4,13 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  Camera,
   CheckCircle2,
   ClipboardCheck,
   ExternalLink,
+  FileText,
+  ListChecks,
+  QrCode,
   ShieldCheck,
 } from "lucide-react";
 import { PremiumCard } from "@/components/cards/PremiumCard";
@@ -17,7 +21,10 @@ import { getFacilityEquipment } from "@/lib/db/equipment";
 import { getFacilityLocations } from "@/lib/db/facilities";
 import { getFacilitySamplingStates } from "@/lib/db/sampling";
 import { getFacilitySpotChecks, updateSpotCheckReview } from "@/lib/db/spot-checks";
-import { getFacilityTaskInstances } from "@/lib/db/tasks";
+import {
+  getFacilityTaskInstances,
+  getTaskEvidencePhotoDownloadUrl,
+} from "@/lib/db/tasks";
 import {
   getSpotCheckTone,
   isSpotCheckOpen,
@@ -42,6 +49,7 @@ export function SpotChecksClient() {
   const [spotChecks, setSpotChecks] = useState<SpotCheck[]>([]);
   const [samplingStates, setSamplingStates] = useState<SamplingState[]>([]);
   const [tasks, setTasks] = useState<CareTaskInstance[]>([]);
+  const [taskPhotoUrls, setTaskPhotoUrls] = useState<Record<string, string>>({});
   const [activeStatus, setActiveStatus] = useState<Record<string, SpotCheckStatus>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [savingId, setSavingId] = useState("");
@@ -90,6 +98,22 @@ export function SpotChecksClient() {
             spotCheckRecords.map((spotCheck) => [spotCheck.id, spotCheck.managerNote]),
           ),
         );
+
+        const photoEntries = await Promise.all(
+          taskRecords
+            .filter((task) => task.photoUrl)
+            .map(async (task) => {
+              try {
+                return [task.id, await getTaskEvidencePhotoDownloadUrl(task.photoUrl)] as const;
+              } catch {
+                return [task.id, ""] as const;
+              }
+            }),
+        );
+
+        if (isMounted) {
+          setTaskPhotoUrls(Object.fromEntries(photoEntries.filter(([, url]) => url)));
+        }
       } catch {
         if (isMounted) {
           setMessage("Spot checks could not be loaded.");
@@ -116,13 +140,20 @@ export function SpotChecksClient() {
     () => new Map(tasks.map((task) => [task.id, task])),
     [tasks],
   );
-  const pendingCount = spotChecks.filter((spotCheck) =>
+  const visibleSpotChecks = useMemo(() => {
+    const supersededSpotCheckIds = new Set(
+      tasks.map((task) => task.sourceSpotCheckId).filter(Boolean),
+    );
+
+    return spotChecks.filter((spotCheck) => !supersededSpotCheckIds.has(spotCheck.id));
+  }, [spotChecks, tasks]);
+  const pendingCount = visibleSpotChecks.filter((spotCheck) =>
     isSpotCheckOpen(spotCheck.status),
   ).length;
-  const failedCount = spotChecks.filter(
+  const failedCount = visibleSpotChecks.filter(
     (spotCheck) => spotCheck.status === "failed" || spotCheck.status === "escalated",
   ).length;
-  const passedCount = spotChecks.filter((spotCheck) => spotCheck.status === "passed").length;
+  const passedCount = visibleSpotChecks.filter((spotCheck) => spotCheck.status === "passed").length;
 
   async function saveReview(spotCheck: SpotCheck) {
     if (!user) {
@@ -140,7 +171,13 @@ export function SpotChecksClient() {
         status: activeStatus[spotCheck.id] ?? spotCheck.status,
         task: tasksById.get(spotCheck.taskId) ?? fallbackTaskFromSpotCheck(spotCheck),
       });
-      const samplingRecords = await getFacilitySamplingStates(user.facilityId);
+      let samplingRecords = samplingStates;
+
+      try {
+        samplingRecords = await getFacilitySamplingStates(user.facilityId);
+      } catch {
+        // The review has saved; keep the current confidence cards if the refresh cannot complete.
+      }
 
       setSpotChecks((current) =>
         current.map((item) => (item.id === spotCheck.id ? updatedSpotCheck : item)),
@@ -194,9 +231,9 @@ export function SpotChecksClient() {
         </p>
       ) : null}
 
-      {spotChecks.length > 0 ? (
+      {visibleSpotChecks.length > 0 ? (
         <div className="grid gap-4">
-          {spotChecks.map((spotCheck) => {
+          {visibleSpotChecks.map((spotCheck) => {
             const task = tasksById.get(spotCheck.taskId);
 
             return (
@@ -215,6 +252,7 @@ export function SpotChecksClient() {
                   setActiveStatus((current) => ({ ...current, [spotCheck.id]: value }))
                 }
                 onSave={() => void saveReview(spotCheck)}
+                photoUrl={task ? taskPhotoUrls[task.id] ?? "" : ""}
                 spotCheck={spotCheck}
                 task={task}
               />
@@ -324,6 +362,7 @@ function SpotCheckCard({
   onChangeNote,
   onChangeStatus,
   onSave,
+  photoUrl,
   spotCheck,
   task,
 }: {
@@ -336,6 +375,7 @@ function SpotCheckCard({
   onChangeNote: (value: string) => void;
   onChangeStatus: (value: SpotCheckStatus) => void;
   onSave: () => void;
+  photoUrl: string;
   spotCheck: SpotCheck;
   task?: CareTaskInstance;
 }) {
@@ -379,11 +419,13 @@ function SpotCheckCard({
 
         <Button asChild size="sm" variant="secondary">
           <Link href={`/app/tasks/${spotCheck.taskId}`}>
-            Task
+            Review task
             <ExternalLink className="h-4 w-4" />
           </Link>
         </Button>
       </div>
+
+      <TaskEvidencePanel photoUrl={photoUrl} task={task} />
 
       <div className="mt-5 grid gap-4 md:grid-cols-[0.7fr_1.3fr]">
         <label className="block">
@@ -433,5 +475,111 @@ function SpotCheckCard({
         {isSaving ? "Saving" : "Save review"}
       </Button>
     </PremiumCard>
+  );
+}
+
+function TaskEvidencePanel({
+  photoUrl,
+  task,
+}: {
+  photoUrl: string;
+  task?: CareTaskInstance;
+}) {
+  if (!task) {
+    return (
+      <div className="mt-5 rounded-2xl border border-facility-amber/25 bg-facility-amber/10 p-4 text-sm text-facility-amber">
+        Task evidence could not be loaded. Open the task before saving this review.
+      </div>
+    );
+  }
+
+  const hasEvidence =
+    task.note ||
+    task.evidence ||
+    task.qrConfirmation ||
+    task.checklistCompleted.length > 0 ||
+    task.photoUrl;
+
+  return (
+    <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold">Staff evidence</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Review the evidence before passing or failing this spot check.
+          </p>
+        </div>
+        <span className="w-fit rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-muted-foreground">
+          {task.evidenceLevel.replace("_", " ")}
+        </span>
+      </div>
+
+      {hasEvidence ? (
+        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+          {task.note ? (
+            <EvidenceTile icon={FileText} label="Staff note" value={task.note} />
+          ) : null}
+          {task.evidence ? (
+            <EvidenceTile icon={FileText} label="Evidence" value={task.evidence} />
+          ) : null}
+          {task.qrConfirmation ? (
+            <EvidenceTile icon={QrCode} label="QR confirmation" value={task.qrConfirmation} />
+          ) : null}
+          {task.checklistCompleted.length > 0 ? (
+            <EvidenceTile
+              icon={ListChecks}
+              label="Checklist completed"
+              value={task.checklistCompleted.join(", ")}
+            />
+          ) : null}
+          {task.photoUrl ? (
+            <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-3">
+              <div className="mb-3 flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
+                <Camera className="h-4 w-4" />
+                Photo evidence
+              </div>
+              {photoUrl ? (
+                <div className="flex items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-black/20 p-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    alt="Staff task evidence"
+                    className="max-h-44 w-auto max-w-full rounded-lg object-contain"
+                    src={photoUrl}
+                  />
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Photo evidence is attached. Open the task if the preview does not load.
+                </p>
+              )}
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <p className="mt-4 rounded-2xl border border-white/10 bg-white/[0.035] p-3 text-sm text-muted-foreground">
+          No staff note or evidence text was submitted for this task.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function EvidenceTile({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: typeof FileText;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-3">
+      <div className="flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
+        <Icon className="h-4 w-4" />
+        {label}
+      </div>
+      <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6">{value}</p>
+    </div>
   );
 }

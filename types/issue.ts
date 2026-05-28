@@ -19,6 +19,16 @@ export type IssuePriority = "low" | "medium" | "high" | "critical";
 
 export type ReporterType = "public" | "staff" | "manager";
 
+export type AiIssueAnalysis = {
+  affectedComponent: string;
+  category: IssueCategory;
+  duplicateOrRepeat: boolean;
+  isSafetyRelated: boolean;
+  priority: IssuePriority;
+  recommendedAction: string;
+  summary: string;
+};
+
 export type PublicIssueReport = {
   id: string;
   facilityId: string;
@@ -42,6 +52,9 @@ export type ManagedIssue = Omit<
   reporterType: ReporterType;
   status: IssueStatus;
   priority: IssuePriority;
+  aiAnalysis?: AiIssueAnalysis;
+  aiAnalyzedAt?: string;
+  aiError?: string;
   assignedTo?: string;
   internalNotes?: string;
   updatedAt?: string;

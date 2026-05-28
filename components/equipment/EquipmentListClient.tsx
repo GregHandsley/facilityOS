@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Box, Plus } from "lucide-react";
 import { useAuth } from "@/lib/auth/AuthProvider";
-import { getFacilityEquipment } from "@/lib/db/equipment";
+import { getFacilityEquipmentWithDerivedStatus } from "@/lib/db/equipment";
 import { getFacilityLocations } from "@/lib/db/facilities";
 import { getProxiedImageUrl } from "@/lib/images/proxy";
 import { can } from "@/lib/rbac/can";
@@ -31,7 +31,7 @@ export function EquipmentListClient() {
 
       try {
         const [equipmentRecords, locationRecords] = await Promise.all([
-          getFacilityEquipment(user.facilityId),
+          getFacilityEquipmentWithDerivedStatus(user.facilityId),
           getFacilityLocations(user.facilityId),
         ]);
 

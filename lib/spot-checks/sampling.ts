@@ -54,6 +54,10 @@ export function getSpotCheckSampleReason(
   now = new Date(),
   state?: SamplingState | null,
 ) {
+  if (task.sourceSpotCheckId) {
+    return "Corrective rework requires review";
+  }
+
   if (task.evidenceLevel === "photo_note") {
     return "Level 4 evidence always sampled";
   }
@@ -74,6 +78,10 @@ export function getSamplingRateForTask(
   now = new Date(),
   state?: SamplingState | null,
 ) {
+  if (task.sourceSpotCheckId) {
+    return 1;
+  }
+
   if (task.evidenceLevel === "photo_note") {
     return 1;
   }

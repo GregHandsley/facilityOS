@@ -27,6 +27,7 @@ import { getFacilityActivityFeed } from "@/lib/db/activity";
 import { getFacilityEquipment } from "@/lib/db/equipment";
 import { getFacilityLocations } from "@/lib/db/facilities";
 import { getFacilityIssues } from "@/lib/db/issues";
+import { getFacilityReplacementIntelligence } from "@/lib/db/replacement-intelligence";
 import { getFacilitySpotChecks } from "@/lib/db/spot-checks";
 import { getFacilityTaskInstances } from "@/lib/db/tasks";
 import { getIssueTone, isIssueOpen, issuePriorityLabels } from "@/lib/issues/labels";
@@ -39,6 +40,7 @@ import type { ManagedIssue } from "@/types/issue";
 import type { SpotCheck } from "@/types/spot-check";
 import type { CareTaskInstance } from "@/types/task";
 import type { ActivityFeedItem } from "@/types/activity";
+import type { ReplacementIntelligence } from "@/types/replacement";
 
 type AttentionItemData = {
   href: string;
@@ -57,6 +59,7 @@ export function ManagerPulseClient() {
   const [spotChecks, setSpotChecks] = useState<SpotCheck[]>([]);
   const [tasks, setTasks] = useState<CareTaskInstance[]>([]);
   const [activity, setActivity] = useState<ActivityFeedItem[]>([]);
+  const [replacementIntelligence, setReplacementIntelligence] = useState<ReplacementIntelligence[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -79,6 +82,7 @@ export function ManagerPulseClient() {
           locationRecords,
           spotCheckRecords,
           taskRecords,
+          replacementRecords,
         ] =
           await Promise.all([
             getFacilityActivityFeed(user.facilityId),
@@ -87,6 +91,7 @@ export function ManagerPulseClient() {
             getFacilityLocations(user.facilityId),
             getFacilitySpotChecks(user.facilityId),
             getFacilityTaskInstances(user.facilityId),
+            getFacilityReplacementIntelligence(user.facilityId),
           ]);
 
         if (!isMounted) {
@@ -99,6 +104,7 @@ export function ManagerPulseClient() {
         setLocations(locationRecords);
         setSpotChecks(spotCheckRecords);
         setTasks(taskRecords);
+        setReplacementIntelligence(replacementRecords);
       } catch {
         if (isMounted) {
           setMessage("Pulse data could not be loaded.");
@@ -151,6 +157,13 @@ export function ManagerPulseClient() {
       ),
     [spotChecks],
   );
+  const activeReplacementIntelligence = useMemo(
+    () =>
+      replacementIntelligence.filter(
+        (item) => item.status !== "none" && item.state !== "dismissed",
+      ),
+    [replacementIntelligence],
+  );
   const attentionItems = useMemo(
     () =>
       [
@@ -195,6 +208,17 @@ export function ManagerPulseClient() {
           tone: spotCheck.status === "recheck_required" ? ("amber" as const) : ("red" as const),
           type: "Spot check",
         })),
+        ...activeReplacementIntelligence.slice(0, 3).map((item) => ({
+          href: `/app/equipment/${item.equipmentId}`,
+          id: `replacement-${item.equipmentId}`,
+          meta: `${replacementStatusLabels[item.status]} · health ${item.healthScore}%`,
+          title: equipmentNames.get(item.equipmentId) ?? "Equipment at risk",
+          tone:
+            item.status === "high_priority_review"
+              ? ("red" as const)
+              : ("amber" as const),
+          type: "Health",
+        })),
       ].slice(0, 6),
     [
       equipmentNames,
@@ -203,6 +227,7 @@ export function ManagerPulseClient() {
       openIssues,
       outOfOrderEquipment,
       overdueTasks,
+      activeReplacementIntelligence,
     ],
   );
   const feedItems = useMemo(
@@ -317,10 +342,23 @@ export function ManagerPulseClient() {
           icon={ClipboardCheck}
           items={failedSpotChecks.slice(0, 4).map((spotCheck) => ({
             href: "/app/spot-checks",
+            id: spotCheck.id,
             meta: spotCheckStatusLabels[spotCheck.status],
             title: equipmentNames.get(spotCheck.equipmentId) ?? "Spot check",
           }))}
           title="Spot Checks"
+        />
+        <PulseList
+          actionHref="/app/equipment"
+          actionLabel="Review"
+          empty="No equipment health reviews are currently flagged."
+          icon={Wrench}
+          items={activeReplacementIntelligence.slice(0, 4).map((item) => ({
+            href: `/app/equipment/${item.equipmentId}`,
+            meta: `${replacementStatusLabels[item.status]} · health ${item.healthScore}%`,
+            title: equipmentNames.get(item.equipmentId) ?? "Equipment at risk",
+          }))}
+          title="Equipment Health"
         />
       </div>
 
@@ -343,17 +381,20 @@ export function ManagerPulseClient() {
         />
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
-          <PlaceholderInsight
-            icon={Wrench}
-            label="Equipment at Risk"
-            title="Replacement intelligence placeholder"
-          />
+          <ReplacementInsight intelligence={activeReplacementIntelligence} equipmentNames={equipmentNames} />
           <PlaceholderInsight icon={Bot} label="AI Insights" title="Pattern detection coming soon" />
         </div>
       </div>
     </section>
   );
 }
+
+const replacementStatusLabels: Record<ReplacementIntelligence["status"], string> = {
+  high_priority_review: "High priority review",
+  none: "No review",
+  review_recommended: "Review recommended",
+  watch: "Watch",
+};
 
 function getPulseHeadline(tone: "green" | "amber" | "red") {
   if (tone === "red") {
@@ -428,7 +469,7 @@ function PulseList({
   actionLabel: string;
   empty: string;
   icon: LucideIcon;
-  items: Array<{ href: string; meta: string; title: string }>;
+  items: Array<{ href: string; id?: string; meta: string; title: string }>;
   title: string;
 }) {
   return (
@@ -445,11 +486,11 @@ function PulseList({
 
       <div className="mt-5 space-y-3">
         {items.length > 0 ? (
-          items.map((item) => (
+          items.map((item, index) => (
             <Link
               className="block rounded-2xl border border-white/10 bg-white/[0.035] p-3 transition hover:border-primary/40 hover:bg-white/[0.065]"
               href={item.href}
-              key={item.href}
+              key={item.id ?? `${item.href}-${item.title}-${index}`}
             >
               <p className="truncate text-sm font-medium">{item.title}</p>
               <p className="mt-1 text-xs text-muted-foreground">{item.meta}</p>
@@ -487,6 +528,44 @@ function PlaceholderInsight({
             <Sparkles className="mr-1 inline h-3.5 w-3.5" />
             Reserved for the intelligence layer.
           </p>
+        </div>
+      </div>
+    </PremiumCard>
+  );
+}
+
+function ReplacementInsight({
+  equipmentNames,
+  intelligence,
+}: {
+  equipmentNames: Map<string, string>;
+  intelligence: ReplacementIntelligence[];
+}) {
+  const topItem = intelligence[0];
+
+  return (
+    <PremiumCard className="p-4">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-facility-amber/15 text-facility-amber">
+          <Wrench className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium text-facility-green">Equipment Health</p>
+          <h3 className="mt-1 text-sm font-semibold">
+            {topItem
+              ? `${equipmentNames.get(topItem.equipmentId) ?? "Equipment"} needs review`
+              : "No equipment health reviews flagged"}
+          </h3>
+          <p className="mt-2 text-xs leading-5 text-muted-foreground">
+            {topItem
+              ? topItem.summary
+              : "Pulse health signals will appear when reliability patterns emerge."}
+          </p>
+          {topItem ? (
+            <Button asChild className="mt-4" size="sm" variant="secondary">
+              <Link href={`/app/equipment/${topItem.equipmentId}`}>Open equipment</Link>
+            </Button>
+          ) : null}
         </div>
       </div>
     </PremiumCard>

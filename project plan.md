@@ -792,7 +792,7 @@ Out-of-Order Equipment
 Overdue Tasks
 Equipment at Risk
 Spot Check Placeholder
-Replacement Review Placeholder
+Equipment Health Review Placeholder
 AI Insight Placeholder
 RBAC Requirements
 Managers can access Pulse
@@ -886,6 +886,58 @@ Manager can fail spot check
 Staff cannot approve own work
 Failed spot check appears in Pulse
 Public cannot read spot check data
+Added after Sprint 12: Failed Spot Check Rework Loop
+Reason
+
+This scope was added after Sprint 12 because the original spot-check plan defined failed, recheck-required and escalated statuses but did not define the operational follow-up for staff. Since Sprint 13 has already been completed, this is documented as a post-Sprint 12 addition rather than a rewrite of the adaptive sampling sprint.
+
+Build
+
+When a manager reviews a spot check as failed or recheck_required:
+
+create a corrective staff task linked to the original task and spot check
+use the manager note as the rework instruction
+assign the corrective task to the staff member who completed the original work
+show the corrective task in the staff Today view
+keep the spot check open until the corrective task is completed and reviewed
+
+When a manager marks a spot check as escalated:
+
+do not assign the staff member to self-resolve by default
+surface the escalation in Pulse for manager follow-up
+allow managers to decide whether to create a corrective task, issue or out-of-order event
+
+Staff workflow:
+
+staff can view their own recheck-required work
+staff can complete the corrective task with required evidence
+staff cannot pass, approve or close their own spot check
+completing corrective work can generate a new manager review
+
+Manager workflow:
+
+manager can pass the rework review
+manager can fail the rework again
+manager can escalate repeated failures
+manager can see the original task, failed spot check, corrective task and rework evidence together
+
+RBAC Requirements
+
+Staff can only see recheck/corrective work assigned to themselves
+Staff cannot see other staff members' failed spot checks
+Staff cannot edit manager notes or review outcomes
+Managers can view all failed, recheck-required and escalated spot checks for their facility
+Public users cannot view failed checks, rework tasks or manager notes
+
+Testing Criteria
+
+Failed spot check creates a corrective staff task
+Recheck-required spot check appears in the staff member's Today view
+Staff completing corrective work does not close the spot check automatically
+Manager can review corrective work and pass it
+Repeated failed rework can be escalated
+Staff cannot approve their own rework
+Public cannot read failed spot check or rework data
 Sprint 13: Adaptive Sampling Logic
 Goal
 
@@ -969,10 +1021,10 @@ Minor issue makes amber
 Resolved issue allows green if no other concerns
 Staff cannot manipulate status
 Public and internal views are consistent
-Sprint 15: Replacement Intelligence v1
+Sprint 15: Equipment Health and Replacement Intelligence v1
 Goal
 
-Flag equipment that may need replacement review.
+Use equipment health to flag equipment that needs manager review.
 
 Build
 
@@ -990,6 +1042,7 @@ failed inspections
 failed spot checks
 issue severity
 issues returning after resolution
+clean-service recovery after repair or return-to-service
 
 Statuses:
 
@@ -997,6 +1050,13 @@ none
 watch
 review_recommended
 high_priority_review
+
+Health bands:
+
+80-100: no review
+60-79: watch
+35-59: review recommended
+under 35: high priority review
 
 No monetary values in MVP.
 
@@ -1007,12 +1067,59 @@ Staff cannot view full replacement intelligence
 Public cannot view replacement intelligence
 Staff cannot dismiss recommendations
 Testing Criteria
-No concerning history = none
-Multiple minor faults = watch
-Repeated out-of-order = review recommended
-Repeated safety issues = high priority review
+Healthy equipment = none
+Declining equipment health = watch
+Poor equipment health = review recommended
+Very poor equipment health = high priority review
 Manager can acknowledge/dismiss
 Public cannot access this data
+
+Added after Sprint 15: Health-Led Pulse Review Refinement
+Reason
+
+This scope was added after the original Sprint 15 plan because the first replacement-intelligence model was too focused on a separate review/risk score. In product use, it was clearer for managers if Pulse simply flags equipment with low or declining health, then sends them to the equipment detail page to investigate the underlying signals.
+
+The original plan still provides the source signals, but the user-facing model is now equipment health first rather than replacement score first.
+
+Changes made
+
+Equipment health is now the main source of truth for Pulse review flags.
+
+Pulse shows equipment health percentage and prioritises the lowest-health equipment.
+
+The equipment detail page includes a compact Pulse review tile in the equipment details grid.
+
+Managers can expand the Pulse review tile to see the underlying signals, including dropdowns for the individual fault reports, out-of-order events, downtime records, failed spot checks and missed inspection/safety tasks.
+
+Health regenerates after repair, return-to-service or completed maintenance:
+
+repair gives a modest immediate health bump
+remaining lost health regenerates over a clean-service period
+new issues during recovery reduce health from the current level
+older resolved/repaired clusters stop driving current health once clean service has been established
+
+Single incidents are not treated as automatic replacement signals:
+
+a quick one-off out-of-order event may lower health slightly
+a single safety/out-of-order incident should not trigger replacement review by itself
+non-reliability issues, such as cleaning issues, do not reduce equipment replacement health
+repeated reliability, downtime, failed checks and safety patterns still reduce health meaningfully
+
+Dismissed flags remain visible as a compact historical marker on the equipment detail page rather than disappearing completely.
+
+What was removed or changed from the original plan
+
+Removed the manager-facing separate review/risk score.
+
+Removed the idea that replacement review is primarily a standalone score beside equipment health.
+
+Removed lifetime-only accumulation as the main trigger; old repaired events now recover over time.
+
+Removed harsh double-counting where a single incident could appear as both a fault signal and a safety/out-of-order replacement signal.
+
+Changed Pulse "Equipment at Risk" from a raw replacement-score list into a health-led review list.
+
+Kept the internal signal points only as calculation detail for health and investigation, not as the manager-facing decision metric.
 Sprint 16: AI Fault Analysis
 Goal
 
@@ -1376,6 +1483,403 @@ Sprint 13: Adaptive Sampling Logic
 Sprint 15: Replacement Intelligence
 Sprint 16: AI Fault Analysis
 Sprint 17: AI Equipment Summary and Insights
+Future Development / Nice-to-Have List
+
+Invite-Only Access and Controlled User Onboarding
+
+FacilityOS should move towards an invite-only access model for staff and manager accounts.
+
+This means users should not be able to freely create accounts and enter the internal app just because they know the login URL. Instead, managers or authorised admins should invite users into a specific facility and assign their role before that user can access protected areas.
+
+This approach is more appropriate for FacilityOS because access is operational and facility-specific. It helps prevent malicious sign-ups, accidental access, incorrect role assignment and cross-facility data exposure.
+
+Future build:
+
+manager/admin invite flow
+invite email sent to staff or manager
+invite token linked to facilityId and intended role
+invite expiry
+accepted invite creates or activates the user profile
+uninvited accounts cannot access internal app routes
+email verification required before invite acceptance completes
+Google sign-in can still be allowed, but only if the signed-in email matches a valid invite
+managers can revoke pending invites
+managers can deactivate users
+audit trail for invite creation, acceptance, revocation and role changes
+
+RBAC requirements:
+
+Public users remain unauthenticated QR users
+Only invited users can become staff or managers
+Managers can only invite users into their own facility
+Only authorised admins/managers can assign roles
+Users cannot self-select staff or manager roles
+Users cannot access internal routes until their invite is accepted and profile is active
+Firestore rules must reject internal reads and writes from authenticated users without an active invited profile
+
+Testing criteria:
+
+Uninvited email/password account cannot access /app routes
+Uninvited Google account cannot access /app routes
+Invited staff user lands on /app/today
+Invited manager lands on /app/pulse
+Expired invite cannot be used
+Revoked invite cannot be used
+User cannot change their own role during onboarding
+Manager cannot invite users into another facility
+Deactivated user loses access immediately
+
+Organisation, Site and Admin Role Model
+
+FacilityOS should eventually support organisations above individual facilities.
+
+This is important because some customers will operate more than one facility. For example, Loughborough University may have Powerbase Gym and Holywell Gym. David Lloyd may have multiple locations such as Lincoln, Nottingham and other clubs.
+
+The long-term structure should become:
+
+Organisation
+Site / facility
+Location
+Equipment
+
+Examples:
+
+Loughborough University
+Powerbase Gym
+Holywell Gym
+
+David Lloyd
+Lincoln
+Nottingham
+
+This should introduce an admin role above facility manager.
+
+Role model:
+
+Public user: unauthenticated QR user
+Staff user: works within assigned facility or facilities
+Manager user: manages one facility by default
+Admin user: manages an organisation and can oversee multiple facilities within that organisation
+Super user: FacilityOS platform-level user who can create organisations and support the whole platform
+
+Admin users may be:
+
+organisation admin
+regional admin
+
+Super users should be separate from customer admins.
+
+Super user role:
+
+create organisations
+create or assign organisation admins
+view and support organisations when needed
+configure platform-level settings
+resolve account/access problems
+manage billing/subscription links if added later
+
+Super users should not be part of normal customer workflows. They are internal FacilityOS operators and should be tightly controlled.
+
+Organisation admin role:
+
+manage one organisation
+create sites/facilities within that organisation
+invite managers and staff
+assign users to one or more facilities
+view organisation-level reporting
+manage organisation settings
+
+Future build:
+
+organisations collection
+organisationId added to facilities
+facility membership model for users
+support users assigned to one or more facilities
+admin dashboard across all organisation facilities
+organisation-level user invitations
+organisation-level reporting
+cross-facility comparisons
+facility switcher for authorised users
+organisation settings
+site/facility creation under an organisation
+admin-managed role assignment
+super-user organisation creation
+super-user platform console
+auditLogs collection for critical actions
+audit log viewer for authorised admins
+
+RBAC requirements:
+
+Staff can only access facilities they are assigned to
+Managers can manage only their assigned facility unless explicitly granted more access
+Organisation admins can manage users and facilities within their organisation
+Organisation admins can create sites/facilities only within their own organisation
+Organisation admins cannot create new organisations
+Organisation admins cannot access another organisation
+Super users can create organisations and manage organisation admins
+Super users should be tightly restricted and audited
+All queries must be scoped by organisationId and facility access
+Cross-organisation access must be blocked at Firestore rules level
+
+Audit log requirements:
+
+create an auditLogs collection
+record actorId, actorRole, organisationId, facilityId, action, targetType, targetId, timestamp and summary
+log organisation creation
+log facility/site creation
+log user invitations
+log role changes
+log user deactivation/reactivation
+log permission changes
+log super-user access to customer organisations
+log critical deletes or archive actions
+audit logs should be append-only
+normal users cannot edit or delete audit logs
+organisation admins can view logs for their organisation
+super users can view platform-level logs
+public users cannot access audit logs
+
+Testing criteria:
+
+Super user can create an organisation
+Super user can assign an organisation admin
+Organisation admin cannot create another organisation
+Admin can create a facility under their organisation
+Admin can invite users into a specific facility
+Admin can view multiple facilities in one organisation
+Manager cannot access another facility unless assigned
+Staff cannot access another facility unless assigned
+Organisation A admin cannot access Organisation B data
+Facility switcher only shows authorised facilities
+Public QR pages remain unauthenticated and facility-specific
+Critical admin and super-user actions create audit log entries
+Audit logs cannot be edited or deleted
+
+Manager Task Deletion and Bulk Task Creation
+
+Managers should eventually be able to remove or archive care tasks and schedules, but this should be controlled rather than allowing silent deletion of operational history.
+
+FacilityOS should also support creating the same task across multiple machines at once. Some checks are naturally completed as a group, such as checking safety features, emergency stops, cables, handles, belts or general cleanliness across all equipment in an area. Managers should not need to write the same task individually for each machine.
+
+Future build:
+
+manager archive/delete action for care task schedules
+manager archive/delete action for pending task instances
+soft-delete or archive by default rather than hard delete
+deletion reason required for schedules or generated tasks
+deleted/archived tasks hidden from active staff dashboards
+completed task history retained for audit and equipment memory
+bulk task creation across selected equipment
+bulk task creation by equipment type
+bulk task creation by location/area
+apply one checklist to many machines
+create grouped care rounds for related equipment
+support task templates that can be applied to multiple machines at once
+option to create one group task with multiple equipment confirmations
+option to create separate task instances per machine from one setup flow
+
+Examples:
+
+Weekly treadmill safety check across all treadmills
+Cable attachment inspection across all cable machines
+Emergency stop check across all cardio machines
+Platform surface inspection across all lifting platforms
+Changing room cleanliness round across all relevant areas
+
+RBAC requirements:
+
+Managers can archive/delete schedules within their facility
+Managers can bulk-create tasks within their facility
+Staff cannot delete care schedules
+Staff cannot bulk-create task schedules unless explicitly granted later
+Public users cannot access task deletion or bulk creation
+Deleted/archived task actions must be logged
+Cross-facility bulk creation must be blocked
+
+Testing criteria:
+
+Manager can archive a pending task schedule
+Archived schedule no longer generates active tasks
+Completed historical tasks remain visible in equipment history
+Manager must provide a reason when archiving/deleting important tasks
+Bulk task creation can select multiple machines
+Bulk task creation can select equipment by type
+Bulk task creation can select equipment by location
+Staff dashboard shows the generated tasks correctly
+Staff cannot delete or bulk-create tasks
+Audit log is created for task deletion/archive
+
+Equipment Health Boosts and Service Log
+
+Equipment health should eventually improve from positive care events, not only recover from faults. The health model should recognise that a machine which is serviced, maintained, cleaned and inspected well is healthier than a machine that simply has no reported faults.
+
+This should sit on top of the current health-led Pulse review model. Faults, downtime and failed checks reduce health; servicing, completed maintenance and consistent care can boost health or accelerate recovery.
+
+Future build:
+
+create an equipmentServiceEvents collection or equivalent service log
+allow managers to manually record when servicing took place
+support service type, date, provider, notes, evidence/photo, invoice/reference and next service due date
+link service events to the equipment activity feed
+show servicing history on the equipment detail page
+allow service events to boost equipment health
+make full servicing a large health boost, especially after a repair or long downtime
+make completed maintenance tasks a small health increase
+make cleaning tasks a very small health increase or confidence signal
+make passed inspections and passed safety checks increase health confidence
+make failed checks reduce health more than routine cleaning can improve it
+cap health boosts so routine cleaning cannot hide serious unresolved faults
+avoid health increasing above safe levels while equipment is still out of order
+allow health boost values to vary by task category, evidence level and equipment type
+support different decay/recovery profiles for different machine types where needed
+include servicing in the clean-service recovery model
+include upcoming or overdue service dates in Pulse and equipment detail
+
+Examples:
+
+annual treadmill service adds a large health boost and records the service provider
+belt replacement after repeated belt faults gives a repair bump and starts clean-service regeneration
+weekly maintenance completion adds a small health improvement
+daily cleaning adds only a tiny confidence improvement and cannot offset mechanical faults
+passed safety inspection improves confidence after an out-of-order event
+missed service date slowly reduces health confidence
+
+Manager workflow:
+
+manager opens equipment detail
+manager selects Add service record
+manager enters service date, provider, work completed and notes
+manager optionally uploads evidence or invoice reference
+service appears in equipment activity and service history
+equipment health updates according to the service type and current state
+next service due date can be set or suggested
+
+RBAC requirements:
+
+Managers can create and edit service records for their facility
+Staff may view service history if relevant to their work
+Staff cannot create formal service records unless explicitly granted later
+Public users cannot view service records, invoices, provider notes or internal evidence
+Cross-facility service records must be blocked
+Service record changes should be auditable
+
+Testing criteria:
+
+Manager can add a service record to equipment
+Service record appears in equipment history
+Service record creates an activity feed item
+Full service boosts health more than routine maintenance
+Maintenance task completion gives a small health increase
+Cleaning task completion does not hide unresolved serious faults
+Health does not jump to full health while equipment remains out of order
+Passed safety inspection improves health confidence
+Overdue service date reduces health confidence or appears as a Pulse signal
+Staff cannot create service records without permission
+Public cannot read service records
+
+Clickable Activity and Status Reasoning
+
+Equipment activity and status reasoning should become actionable, not just informational.
+
+Managers should be able to click activity feed items and status reasoning rows to go directly to the relevant task, issue, spot check, out-of-order event, equipment record or rework item. This will make it much faster to investigate and resolve amber/red status causes.
+
+Future build:
+
+activity feed items become links when a target exists
+task_completed activity links to the completed task
+fault_reported activity links to the issue detail
+issue_status_changed activity links to the issue detail
+equipment_marked_out_of_order activity links to the out-of-order event or linked issue
+equipment_returned_to_service activity links to the out-of-order history
+spot_check_completed activity links to the spot check detail
+AI insight activity links to the insight detail
+status reasoning rows include target references
+active issue reasoning links to filtered/open issues or the exact issue
+out-of-order reasoning links to the active out-of-order event
+failed/recheck spot check reasoning links to the relevant spot check
+overdue task reasoning links to the overdue task
+replacement warning reasoning links to replacement intelligence when available
+
+UX requirements:
+
+Use clear hover/focus states so clickable rows feel intentional
+Show a small arrow or external-link icon on actionable rows
+If multiple records cause the same status reason, open a filtered list rather than choosing one silently
+If the current user lacks permission for a target, hide the link or route to an allowed summary
+Keep public QR pages non-internal and do not expose staff or manager-only targets
+
+RBAC requirements:
+
+Staff can only click through to records they are allowed to view
+Managers can click through to facility records
+Public users cannot access internal activity or reasoning targets
+Cross-facility links must be blocked
+Manager-only activity remains manager-only
+
+Testing criteria:
+
+Task activity opens the task detail
+Fault activity opens the issue detail
+Out-of-order activity opens the linked issue or event detail
+Spot-check activity opens the spot check detail
+Status reason for active issue opens the issue or filtered issue list
+Status reason for overdue task opens the task
+Staff cannot open manager-only target links
+Public users cannot access internal linked targets
+
+Navigation and Header Overhaul
+
+FacilityOS should eventually have a more complete navigation system so users do not need to manually enter URLs or remember route paths.
+
+As the product grows, navigation should make the app feel connected and easy to move around. Staff, managers, admins and future super users should each see navigation that matches their role and current workflow.
+
+Future build:
+
+persistent app navigation for logged-in users
+role-aware navigation items
+manager navigation for Pulse, Equipment, Tasks, Issues, Spot Checks, Insights and Settings
+staff navigation for Today, Tasks, Equipment and relevant assigned work
+admin navigation for organisation, facilities, users and reporting when admin roles are added
+mobile bottom navigation for high-frequency staff actions
+desktop sidebar or top navigation for manager/admin workflows
+breadcrumbs on detail pages
+contextual page actions in headers
+clear links from equipment detail to public QR page
+copy public QR URL action
+quick action menu for common equipment actions
+facility switcher when multi-facility support is added
+user/account menu with role, facility and logout
+active route highlighting
+back links that return users to the correct previous list/filter where possible
+empty states that include direct next-step actions
+
+Header requirements:
+
+Headers should show where the user is, what object they are viewing and the most useful next actions.
+Equipment detail headers should include public page, edit, out-of-order/return-to-service and back actions where permitted.
+Issue detail headers should include status, priority and return-to-list actions.
+Task detail headers should include completion status and return-to-task-list actions.
+Spot check headers should include review status and link back to related tasks/equipment.
+
+RBAC requirements:
+
+Navigation items must be role-aware
+Staff must not see manager-only routes
+Managers must not see platform-only super-user routes
+Public QR users must not see internal app navigation
+Hidden navigation must not replace route/API/Firestore enforcement
+Cross-facility navigation must be blocked unless the user has access
+
+Testing criteria:
+
+Staff can navigate without typing URLs
+Manager can navigate between Pulse, Equipment, Tasks, Issues and Spot Checks
+Equipment detail links to the public QR page
+Breadcrumbs work on detail pages
+Mobile navigation is usable on staff workflows
+Manager-only navigation is hidden from staff
+Public QR page does not expose internal navigation
+Back actions return to sensible list views
 First Codex Build Instruction
 
 Use this to start the build:

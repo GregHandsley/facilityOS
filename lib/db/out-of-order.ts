@@ -1,17 +1,23 @@
-import { collection, doc, setDoc, updateDoc } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  getDocs,
+  query,
+  setDoc,
+  updateDoc,
+  where,
+  writeBatch,
+} from "firebase/firestore";
 import { ref, uploadBytes } from "firebase/storage";
 import { tryCreateActivityFeedItem } from "@/lib/db/activity";
+import { syncEquipmentStatus } from "@/lib/db/equipment-status";
 import { firestore, firebaseStorage } from "@/lib/firebase/client";
-import { getPublicStatusCopy } from "@/lib/equipment/public-status";
 import { getIssuePriorityForOutOfOrder } from "@/lib/out-of-order/labels";
 import type { ManagedIssue } from "@/types/issue";
 import type {
   CreateOutOfOrderInput,
   OutOfOrderEvent,
 } from "@/types/out-of-order";
-
-const outOfOrderMessage =
-  "This equipment is currently out of use. The issue has been logged and the team has been notified.";
 
 export async function createOutOfOrderEvent(input: CreateOutOfOrderInput) {
   if (!input.reason.trim()) {
@@ -59,16 +65,7 @@ export async function createOutOfOrderEvent(input: CreateOutOfOrderInput) {
 
   await setDoc(eventRef, event);
   await setDoc(issueRef, issue);
-  await updateDoc(doc(firestore, "equipment", input.equipmentId), {
-    status: "red",
-    updatedAt: now,
-  });
-  await updateDoc(doc(firestore, "publicEquipment", input.publicSlug), {
-    hasActivePublicFault: true,
-    outOfOrderMessage,
-    publicStatus: "red",
-    publicStatusCopy: getPublicStatusCopy("red"),
-  });
+  await syncEquipmentStatus(input.equipmentId);
   await tryCreateActivityFeedItem({
     actorId: input.createdBy,
     actorName: "Staff member",
@@ -99,6 +96,59 @@ export async function returnEquipmentToService({
   publicSlug: string;
 }) {
   const now = new Date().toISOString();
+  const snapshot = await getDocs(
+    query(
+      collection(firestore, "outOfOrderEvents"),
+      where("facilityId", "==", facilityId),
+      where("equipmentId", "==", equipmentId),
+    ),
+  );
+  const issueSnapshot = await getDocs(
+    query(
+      collection(firestore, "issues"),
+      where("facilityId", "==", facilityId),
+      where("equipmentId", "==", equipmentId),
+    ),
+  );
+  const batch = writeBatch(firestore);
+  const linkedIssueIds = snapshot.docs
+    .filter((eventDoc) => !String(eventDoc.data().resolvedAt ?? ""))
+    .map((eventDoc) => String(eventDoc.data().linkedIssueId ?? ""))
+    .filter(Boolean);
+
+  snapshot.docs
+    .filter((eventDoc) => !String(eventDoc.data().resolvedAt ?? ""))
+    .forEach((eventDoc) => {
+      batch.update(eventDoc.ref, {
+        resolvedAt: now,
+        returnedToServiceBy: "",
+      });
+    });
+
+  issueSnapshot.docs
+    .filter((issueDoc) => {
+      const issue = issueDoc.data();
+      const status = String(issue.status ?? "");
+      const reporterType = String(issue.reporterType ?? "");
+      const category = String(issue.category ?? "");
+
+      return (
+        status !== "resolved" &&
+        status !== "closed" &&
+        (linkedIssueIds.includes(issueDoc.id) ||
+          (reporterType === "staff" &&
+            (category === "safety_concern" || category === "equipment_fault")))
+      );
+    })
+    .forEach((issueDoc) => {
+      batch.update(issueDoc.ref, {
+        closedAt: now,
+        status: "closed",
+        updatedAt: now,
+      });
+    });
+
+  await batch.commit();
 
   await updateDoc(doc(firestore, "equipment", equipmentId), {
     status: "green",
@@ -107,8 +157,9 @@ export async function returnEquipmentToService({
   await updateDoc(doc(firestore, "publicEquipment", publicSlug), {
     outOfOrderMessage: "",
     publicStatus: "green",
-    publicStatusCopy: getPublicStatusCopy("green"),
+    publicStatusCopy: "Ready to use",
   });
+  const updatedEquipment = await syncEquipmentStatus(equipmentId);
   await tryCreateActivityFeedItem({
     actorId: "",
     actorName: "Manager",
@@ -123,6 +174,8 @@ export async function returnEquipmentToService({
     title: "Equipment returned to service",
     type: "equipment_returned_to_service",
   });
+
+  return updatedEquipment;
 }
 
 export async function uploadOutOfOrderPhoto({

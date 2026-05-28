@@ -6,23 +6,32 @@ import {
   AlertTriangle,
   Archive,
   Box,
+  ChevronDown,
   Edit3,
   MapPinned,
   QrCode,
   RotateCcw,
+  Wrench,
 } from "lucide-react";
 import { ActivityFeedCard } from "@/components/cards/ActivityFeedCard";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { toActivityCardItem } from "@/lib/activity/feed";
 import { getEquipmentActivityFeed } from "@/lib/db/activity";
-import { archiveEquipment, getEquipment } from "@/lib/db/equipment";
+import { archiveEquipment, getEquipmentWithDerivedStatus } from "@/lib/db/equipment";
+import { getEquipmentStatusReview, syncEquipmentStatus } from "@/lib/db/equipment-status";
 import { getFacilityLocations } from "@/lib/db/facilities";
 import { returnEquipmentToService } from "@/lib/db/out-of-order";
+import {
+  getEquipmentReplacementIntelligence,
+  updateReplacementReviewState,
+} from "@/lib/db/replacement-intelligence";
 import { getProxiedImageUrl } from "@/lib/images/proxy";
 import { can } from "@/lib/rbac/can";
 import type { Equipment } from "@/types/equipment";
 import type { FacilityLocation } from "@/types/facility";
 import type { ActivityFeedItem } from "@/types/activity";
+import type { EquipmentStatusResult } from "@/lib/status/equipmentStatus";
+import type { ReplacementIntelligence, ReplacementSignal } from "@/types/replacement";
 import { PremiumCard } from "@/components/cards/PremiumCard";
 import { StatusBadge } from "@/components/status/StatusBadge";
 import { Button } from "@/components/ui/button";
@@ -32,8 +41,13 @@ export function EquipmentDetailClient({ equipmentId }: { equipmentId: string }) 
   const [equipment, setEquipment] = useState<Equipment | null>(null);
   const [activity, setActivity] = useState<ActivityFeedItem[]>([]);
   const [locations, setLocations] = useState<FacilityLocation[]>([]);
+  const [statusReview, setStatusReview] = useState<EquipmentStatusResult | null>(null);
+  const [replacementIntelligence, setReplacementIntelligence] =
+    useState<ReplacementIntelligence | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [isArchiving, setIsArchiving] = useState(false);
+  const [isPulseReviewExpanded, setIsPulseReviewExpanded] = useState(false);
+  const [expandedPulseSignalLabels, setExpandedPulseSignalLabels] = useState<string[]>([]);
   const [isReturningToService, setIsReturningToService] = useState(false);
 
   useEffect(() => {
@@ -46,7 +60,7 @@ export function EquipmentDetailClient({ equipmentId }: { equipmentId: string }) 
 
       try {
         const [equipmentRecord, locationRecords] = await Promise.all([
-          getEquipment(equipmentId),
+          getEquipmentWithDerivedStatus(equipmentId),
           getFacilityLocations(user.facilityId),
         ]);
 
@@ -62,18 +76,34 @@ export function EquipmentDetailClient({ equipmentId }: { equipmentId: string }) 
         setEquipment(equipmentRecord);
         setLocations(locationRecords);
 
-        try {
-          const activityRecords = await getEquipmentActivityFeed({
-            equipmentId,
-            facilityId: user.facilityId,
-          });
+        const activityRecords = await getEquipmentActivityFeed({
+          equipmentId,
+          facilityId: user.facilityId,
+        }).catch(() => []);
+
+        if (isMounted) {
+          setActivity(activityRecords);
+        }
+
+        if (can(user, "view_manager_pulse")) {
+          const review = await getEquipmentStatusReview(equipmentRecord).catch(() => null);
+          const syncedEquipment = await syncEquipmentStatus(equipmentRecord.id).catch(() => null);
 
           if (isMounted) {
-            setActivity(activityRecords);
+            setStatusReview(review);
+            if (syncedEquipment) {
+              setEquipment({ ...equipmentRecord, status: syncedEquipment.status });
+            }
           }
-        } catch {
+        }
+
+        if (can(user, "view_replacement_intelligence")) {
+          const replacementReview = await getEquipmentReplacementIntelligence(
+            equipmentRecord.id,
+          ).catch(() => null);
+
           if (isMounted) {
-            setActivity([]);
+            setReplacementIntelligence(replacementReview);
           }
         }
       } catch {
@@ -122,18 +152,59 @@ export function EquipmentDetailClient({ equipmentId }: { equipmentId: string }) 
     setMessage(null);
 
     try {
-      await returnEquipmentToService({
+      const updatedEquipment = await returnEquipmentToService({
         facilityId: equipment.facilityId,
         equipmentId: equipment.id,
         locationId: equipment.locationId,
         publicSlug: equipment.publicSlug,
       });
-      setEquipment({ ...equipment, status: "green" });
-      setMessage("Equipment returned to service.");
+      setEquipment({ ...equipment, status: updatedEquipment?.status ?? "green" });
+      if (updatedEquipment) {
+        setStatusReview(await getEquipmentStatusReview(updatedEquipment));
+      }
+      setMessage(
+        updatedEquipment?.status === "green"
+          ? "Equipment returned to service."
+          : updatedEquipment?.status === "amber"
+            ? "Equipment is back in service, but still needs attention."
+            : "Equipment still has a red status because a critical signal remains active.",
+      );
     } catch {
       setMessage("Equipment could not be returned to service.");
     } finally {
       setIsReturningToService(false);
+    }
+  }
+
+  async function handleReplacementState(state: "acknowledged" | "dismissed") {
+    if (!replacementIntelligence || !user) {
+      return;
+    }
+
+    try {
+      await updateReplacementReviewState({
+        equipmentId: replacementIntelligence.equipmentId,
+        facilityId: replacementIntelligence.facilityId,
+        score: replacementIntelligence.score,
+        state,
+        status: replacementIntelligence.status,
+        summary: replacementIntelligence.summary,
+        userId: user.id,
+      });
+      setReplacementIntelligence({
+        ...replacementIntelligence,
+        state,
+        updatedAt: new Date().toISOString(),
+      });
+      setIsPulseReviewExpanded(false);
+      setExpandedPulseSignalLabels([]);
+      setMessage(
+        state === "acknowledged"
+          ? "Pulse review acknowledged."
+          : "Pulse review dismissed.",
+      );
+    } catch {
+      setMessage("Pulse review could not be updated.");
     }
   }
 
@@ -152,6 +223,25 @@ export function EquipmentDetailClient({ equipmentId }: { equipmentId: string }) 
       </PremiumCard>
     );
   }
+
+  const canViewReplacementIntelligence = user
+    ? can(user, "view_replacement_intelligence")
+    : false;
+  const activeReplacementReview =
+    replacementIntelligence &&
+    replacementIntelligence.status !== "none" &&
+    replacementIntelligence.state !== "dismissed"
+      ? replacementIntelligence
+      : null;
+  const dismissedReplacementReview =
+    replacementIntelligence &&
+    replacementIntelligence.status !== "none" &&
+    replacementIntelligence.state === "dismissed"
+      ? replacementIntelligence
+      : null;
+  const visibleReplacementReview = activeReplacementReview ?? dismissedReplacementReview;
+  const isHighPriorityReplacementReview =
+    activeReplacementReview?.status === "high_priority_review";
 
   return (
     <section className="space-y-4">
@@ -204,14 +294,166 @@ export function EquipmentDetailClient({ equipmentId }: { equipmentId: string }) 
             <InfoTile
               icon={<AlertTriangle className="h-4 w-4" />}
               label="Availability"
-              value={equipment.status === "red" ? "Out of order" : "In service"}
+              value={
+                equipment.status === "red"
+                  ? "Out of order"
+                  : equipment.status === "amber"
+                    ? "Needs attention"
+                    : "In service"
+              }
             />
+            {canViewReplacementIntelligence ? (
+              <PulseReviewTile
+                activeReview={activeReplacementReview}
+                dismissedReview={dismissedReplacementReview}
+                isExpanded={isPulseReviewExpanded}
+                onToggle={() => setIsPulseReviewExpanded((current) => !current)}
+                healthScore={replacementIntelligence?.healthScore ?? 100}
+                visibleReview={visibleReplacementReview}
+              />
+            ) : null}
           </div>
+
+          {statusReview ? (
+            <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-4">
+              <p className="text-xs font-medium uppercase text-muted-foreground">
+                Status reasoning
+              </p>
+              <p className="mt-2 text-sm font-medium">{statusReview.statusCopy}</p>
+              <div className="mt-3 grid gap-2">
+                {statusReview.reasons.slice(0, 4).map((reason) => (
+                  <div
+                    className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm"
+                    key={`${reason.severity}-${reason.message}`}
+                  >
+                    <span className="text-muted-foreground">{reason.message}</span>
+                    <StatusBadge status={reason.severity} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {equipment.description ? (
             <p className="mt-6 rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-sm leading-6 text-muted-foreground">
               {equipment.description}
             </p>
+          ) : null}
+
+          {visibleReplacementReview && isPulseReviewExpanded ? (
+            <div
+              className={
+                activeReplacementReview
+                  ? isHighPriorityReplacementReview
+                    ? "mt-6 rounded-2xl border border-facility-red/25 bg-facility-red/10 p-4"
+                    : "mt-6 rounded-2xl border border-facility-amber/25 bg-facility-amber/10 p-4"
+                  : "mt-6 rounded-2xl border border-white/10 bg-black/20 p-4"
+              }
+            >
+              <div className="flex items-start gap-3">
+                <div
+                  className={
+                    activeReplacementReview
+                      ? isHighPriorityReplacementReview
+                        ? "flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-facility-red/15 text-facility-red"
+                        : "flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-facility-amber/15 text-facility-amber"
+                      : "flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-muted-foreground"
+                  }
+                >
+                  <Wrench className="h-5 w-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p
+                    className={
+                      activeReplacementReview
+                        ? isHighPriorityReplacementReview
+                          ? "text-xs font-medium uppercase text-facility-red"
+                          : "text-xs font-medium uppercase text-facility-amber"
+                        : "text-xs font-medium uppercase text-muted-foreground"
+                    }
+                  >
+                    Pulse equipment review
+                  </p>
+                  <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-base font-semibold">
+                        {activeReplacementReview
+                          ? replacementReviewHeadlines[activeReplacementReview.status]
+                          : "1 Pulse flag dismissed"}
+                      </h2>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Health {visibleReplacementReview.healthScore}%
+                      </p>
+                    </div>
+                    <Button
+                      onClick={() => setIsPulseReviewExpanded(false)}
+                      size="sm"
+                      type="button"
+                      variant={activeReplacementReview ? "secondary" : "ghost"}
+                    >
+                      Hide details
+                    </Button>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                    {activeReplacementReview
+                      ? "Current equipment health needs review. Repairs and clean time in service help it recover."
+                      : "This Pulse flag has been dismissed, but the detail is kept here for audit and context."}
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                    {visibleReplacementReview.summary}
+                  </p>
+                  <div className="mt-4 grid gap-2">
+                    {visibleReplacementReview.signals.slice(0, 4).map((signal) => (
+                      <ReplacementSignalDisclosure
+                        isOpen={expandedPulseSignalLabels.includes(signal.label)}
+                        key={signal.label}
+                        onToggle={() =>
+                          setExpandedPulseSignalLabels((current) =>
+                            current.includes(signal.label)
+                              ? current.filter((label) => label !== signal.label)
+                              : [...current, signal.label],
+                          )
+                        }
+                        signal={signal}
+                      />
+                    ))}
+                  </div>
+                  {activeReplacementReview ? (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {can(user, "mark_out_of_order") && equipment.status !== "red" ? (
+                        <Button asChild size="sm" variant="secondary">
+                          <Link href={`/app/equipment/${equipment.id}/out-of-order`}>
+                            <AlertTriangle className="h-4 w-4" />
+                            Mark out of order
+                          </Link>
+                        </Button>
+                      ) : null}
+                      {can(user, "manage_care_plans") ? (
+                        <Button asChild size="sm" variant="secondary">
+                          <Link href="/app/tasks">Create maintenance task</Link>
+                        </Button>
+                      ) : null}
+                      <Button
+                        onClick={() => void handleReplacementState("acknowledged")}
+                        size="sm"
+                        type="button"
+                        variant="ghost"
+                      >
+                        Acknowledge review
+                      </Button>
+                      <Button
+                        onClick={() => void handleReplacementState("dismissed")}
+                        size="sm"
+                        type="button"
+                        variant="ghost"
+                      >
+                        Dismiss
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
           ) : null}
 
           {message ? (
@@ -283,6 +525,169 @@ export function EquipmentDetailClient({ equipmentId }: { equipmentId: string }) 
         }
       />
     </section>
+  );
+}
+
+const replacementReviewHeadlines: Record<ReplacementIntelligence["status"], string> = {
+  high_priority_review: "High priority review needed",
+  none: "No review needed",
+  review_recommended: "Manager review recommended",
+  watch: "Review and monitor",
+};
+
+const replacementStatusLabels: Record<ReplacementIntelligence["status"], string> = {
+  high_priority_review: "High priority review",
+  none: "No review",
+  review_recommended: "Review recommended",
+  watch: "Watch",
+};
+
+function PulseReviewTile({
+  activeReview,
+  dismissedReview,
+  healthScore,
+  isExpanded,
+  onToggle,
+  visibleReview,
+}: {
+  activeReview: ReplacementIntelligence | null;
+  dismissedReview: ReplacementIntelligence | null;
+  healthScore: number;
+  isExpanded: boolean;
+  onToggle: () => void;
+  visibleReview: ReplacementIntelligence | null;
+}) {
+  const isHighPriority = activeReview?.status === "high_priority_review";
+  const displayedHealth = visibleReview?.healthScore ?? healthScore;
+  const tileClass = activeReview
+    ? isHighPriority
+      ? "rounded-2xl border border-facility-red/25 bg-facility-red/10 p-4"
+      : "rounded-2xl border border-facility-amber/25 bg-facility-amber/10 p-4"
+    : "rounded-2xl border border-white/10 bg-white/[0.04] p-4";
+  const labelClass = activeReview
+    ? isHighPriority
+      ? "flex items-center gap-2 text-xs text-facility-red"
+      : "flex items-center gap-2 text-xs text-facility-amber"
+    : "flex items-center gap-2 text-xs text-muted-foreground";
+
+  return (
+    <div className={tileClass}>
+      <div className={labelClass}>
+        <Wrench className="h-4 w-4" />
+        Pulse review
+      </div>
+      <div className="mt-2 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">
+            {activeReview
+              ? replacementReviewHeadlines[activeReview.status]
+              : dismissedReview
+                ? "1 flag dismissed"
+                : "No review required"}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {visibleReview
+              ? `Health ${displayedHealth}% · ${replacementStatusLabels[visibleReview.status]}`
+              : `Health ${displayedHealth}%`}
+          </p>
+        </div>
+        {visibleReview ? (
+          <Button
+            className="shrink-0"
+            onClick={onToggle}
+            size="sm"
+            type="button"
+            variant={activeReview ? "secondary" : "ghost"}
+          >
+            {isExpanded ? "Hide" : "Review"}
+          </Button>
+        ) : null}
+      </div>
+      <div className="mt-3 h-1.5 rounded-full bg-white/[0.08]">
+        <div
+          className={`h-full rounded-full ${
+            displayedHealth < 35
+              ? "bg-facility-red"
+              : displayedHealth < 65
+                ? "bg-facility-amber"
+                : "bg-facility-green"
+          }`}
+          style={{ width: `${displayedHealth}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ReplacementSignalDisclosure({
+  isOpen,
+  onToggle,
+  signal,
+}: {
+  isOpen: boolean;
+  onToggle: () => void;
+  signal: ReplacementSignal;
+}) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-black/20 text-sm">
+      <button
+        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
+        onClick={onToggle}
+        type="button"
+      >
+        <span className="min-w-0 text-muted-foreground">
+          {signal.label}
+          {signal.details.length > 0 ? (
+            <span className="ml-2 text-xs text-muted-foreground/70">
+              {isOpen ? "Hide records" : "View records"}
+            </span>
+          ) : null}
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          <span className="rounded-full bg-white/[0.08] px-2.5 py-1 text-xs text-muted-foreground">
+            +{signal.points}
+          </span>
+          {signal.details.length > 0 ? (
+            <ChevronDown
+              className={`h-4 w-4 text-muted-foreground transition ${
+                isOpen ? "rotate-180" : ""
+              }`}
+            />
+          ) : null}
+        </span>
+      </button>
+      {isOpen && signal.details.length > 0 ? (
+        <div className="border-t border-white/10 px-3 py-2">
+          <div className="grid gap-2">
+            {signal.details.map((detail) => {
+              const content = (
+                <>
+                  <p className="font-medium text-foreground">{detail.label}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{detail.meta}</p>
+                </>
+              );
+
+              return detail.href ? (
+                <Link
+                  className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 transition hover:border-facility-green/40"
+                  href={detail.href}
+                  key={detail.id}
+                >
+                  {content}
+                </Link>
+              ) : (
+                <div
+                  className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2"
+                  key={detail.id}
+                >
+                  {content}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

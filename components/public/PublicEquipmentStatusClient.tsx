@@ -72,11 +72,17 @@ export function PublicEquipmentStatusClient({
               </div>
             ) : null}
 
-            <Button asChild className="mt-4 w-full">
-              <Link href={`/public/equipment/${equipment.publicSlug}/report`}>
-                Report a fault
-              </Link>
-            </Button>
+            {equipment.isOutOfOrder ? (
+              <p className="mt-4 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-muted-foreground">
+                Fault reporting is paused while this equipment is out of order.
+              </p>
+            ) : (
+              <Button asChild className="mt-4 w-full">
+                <Link href={`/public/equipment/${equipment.publicSlug}/report`}>
+                  Report a fault
+                </Link>
+              </Button>
+            )}
           </div>
         </PremiumCard>
 

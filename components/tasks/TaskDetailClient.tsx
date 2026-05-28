@@ -57,7 +57,11 @@ export function TaskDetailClient({ taskId }: { taskId: string }) {
           return;
         }
 
-        if (!taskRecord || taskRecord.facilityId !== user.facilityId) {
+        if (
+          !taskRecord ||
+          taskRecord.facilityId !== user.facilityId ||
+          (taskRecord.assignedTo && taskRecord.assignedTo !== user.id && user.role !== "manager")
+        ) {
           setMessage("Task was not found.");
           return;
         }
@@ -109,6 +113,7 @@ export function TaskDetailClient({ taskId }: { taskId: string }) {
   const locationName = useMemo(() => {
     return locations.find((location) => location.id === task?.locationId)?.name;
   }, [locations, task?.locationId]);
+  const isCorrectiveTask = Boolean(task?.sourceSpotCheckId);
 
   async function completeTask() {
     if (!task || !user) {
@@ -164,7 +169,11 @@ export function TaskDetailClient({ taskId }: { taskId: string }) {
         task,
       });
       setTask(updatedTask);
-      setMessage("Task completed. Equipment care history has been updated.");
+      setMessage(
+        isCorrectiveTask
+          ? "Corrective task completed. A manager can now review the rework."
+          : "Task completed. Equipment care history has been updated.",
+      );
     } catch {
       setMessage("Task could not be completed.");
     } finally {
@@ -199,12 +208,19 @@ export function TaskDetailClient({ taskId }: { taskId: string }) {
         </Button>
 
         <p className="text-sm text-facility-green">
-          {taskCategoryLabels[task.category]}
+          {isCorrectiveTask ? "Rework required" : taskCategoryLabels[task.category]}
         </p>
         <h1 className="mt-2 text-3xl font-semibold tracking-normal">{task.title}</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
           {task.description || "No extra task instructions were added."}
         </p>
+
+        {isCorrectiveTask ? (
+          <p className="mt-4 rounded-2xl border border-facility-amber/25 bg-facility-amber/10 px-4 py-3 text-sm text-facility-amber">
+            This task was created from a failed spot check. Complete the rework with evidence so a
+            manager can review it again.
+          </p>
+        ) : null}
 
         <div className="mt-6 grid gap-3 sm:grid-cols-2">
           <InfoTile label="Equipment" value={equipment?.name ?? "Equipment"} />

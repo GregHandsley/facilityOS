@@ -41,6 +41,13 @@ describe("spot check sampling", () => {
     );
   });
 
+  it("always samples corrective rework tasks", () => {
+    expect(shouldGenerateSpotCheck({ ...task, sourceSpotCheckId: "spot-check-1" })).toBe(true);
+    expect(getSpotCheckSampleReason({ ...task, sourceSpotCheckId: "spot-check-1" })).toBe(
+      "Corrective rework requires review",
+    );
+  });
+
   it("uses the default sample rate for ordinary tasks", () => {
     vi.spyOn(Math, "random").mockReturnValueOnce(0.09).mockReturnValueOnce(0.11);
 
@@ -102,8 +109,9 @@ describe("spot check labels", () => {
     expect(getSpotCheckTone("passed")).toBe("green");
   });
 
-  it("treats pending and recheck-required checks as open", () => {
+  it("treats unresolved assurance outcomes as open", () => {
     expect(isSpotCheckOpen("pending")).toBe(true);
+    expect(isSpotCheckOpen("failed")).toBe(true);
     expect(isSpotCheckOpen("recheck_required")).toBe(true);
     expect(isSpotCheckOpen("passed")).toBe(false);
   });

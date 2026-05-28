@@ -19,6 +19,9 @@ import type {
   PublicEquipmentStatus,
   UpdateEquipmentInput,
 } from "@/types/equipment";
+import type { ManagedIssue } from "@/types/issue";
+
+const activeIssueStatuses = ["new", "acknowledged", "assigned", "in_progress", "waiting"];
 
 export async function getFacilityEquipment(facilityId: string) {
   const snapshot = await getDocs(
@@ -31,6 +34,44 @@ export async function getFacilityEquipment(facilityId: string) {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+export async function getFacilityEquipmentWithDerivedStatus(facilityId: string) {
+  const [equipment, issues] = await Promise.all([
+    getFacilityEquipment(facilityId),
+    getActiveFacilityEquipmentIssues(facilityId),
+  ]);
+  const publicSummaries = await Promise.all(
+    equipment.map((item) => getPublicEquipmentSummary(item.publicSlug)),
+  );
+
+  const activeIssueEquipmentIds = new Set(issues.map((issue) => issue.equipmentId));
+  const activePublicFaultEquipmentIds = new Set(
+    publicSummaries
+      .filter((summary): summary is PublicEquipmentSummary => Boolean(summary))
+      .filter(
+        (summary) =>
+          summary.publicStatus === "red" ||
+          summary.publicStatus === "amber" ||
+          summary.hasActivePublicFault,
+      )
+      .map((summary) => summary.equipmentId),
+  );
+
+  return equipment.map((item) => {
+    if (
+      item.status !== "green" ||
+      (!activeIssueEquipmentIds.has(item.id) &&
+        !activePublicFaultEquipmentIds.has(item.id))
+    ) {
+      return item;
+    }
+
+    return {
+      ...item,
+      status: "amber" as const,
+    };
+  });
+}
+
 export async function getEquipment(equipmentId: string) {
   const snapshot = await getDoc(doc(firestore, "equipment", equipmentId));
 
@@ -39,6 +80,33 @@ export async function getEquipment(equipmentId: string) {
   }
 
   return snapshot.data() as Equipment;
+}
+
+export async function getEquipmentWithDerivedStatus(equipmentId: string) {
+  const equipment = await getEquipment(equipmentId);
+
+  if (!equipment || equipment.status !== "green") {
+    return equipment;
+  }
+
+  const [issues, publicSummary] = await Promise.all([
+    getActiveEquipmentIssues(equipment),
+    getPublicEquipmentSummary(equipment.publicSlug),
+  ]);
+
+  const hasPublicFault =
+    publicSummary?.publicStatus === "red" ||
+    publicSummary?.publicStatus === "amber" ||
+    publicSummary?.hasActivePublicFault;
+
+  if (issues.length === 0 && !hasPublicFault) {
+    return equipment;
+  }
+
+  return {
+    ...equipment,
+    status: publicSummary?.publicStatus === "red" ? ("red" as const) : ("amber" as const),
+  };
 }
 
 export async function getPublicEquipmentBySlug(
@@ -56,6 +124,11 @@ export async function getPublicEquipmentBySlug(
     return null;
   }
 
+  const publicStatus =
+    equipment.publicStatus === "green" && equipment.hasActivePublicFault
+      ? "amber"
+      : equipment.publicStatus;
+
   return {
     equipmentId: equipment.equipmentId,
     facilityId: equipment.facilityId,
@@ -66,13 +139,16 @@ export async function getPublicEquipmentBySlug(
     locationName: equipment.publicLocationName || "Facility area",
     manufacturer: equipment.publicManufacturer,
     model: equipment.publicModel,
-    status: equipment.publicStatus,
-    statusCopy: equipment.publicStatusCopy,
+    status: publicStatus,
+    statusCopy:
+      publicStatus === equipment.publicStatus
+        ? equipment.publicStatusCopy
+        : getPublicStatusCopy(publicStatus),
     lastCleanedLabel: equipment.lastCleanedAt || "Cleaning history coming soon",
     lastMaintainedLabel: equipment.lastMaintainedAt || "Maintenance history coming soon",
     lastInspectedLabel: equipment.lastInspectedAt || "Inspection history coming soon",
     hasActiveFault: equipment.hasActivePublicFault,
-    isOutOfOrder: equipment.publicStatus === "red",
+    isOutOfOrder: publicStatus === "red",
   };
 }
 
@@ -218,4 +294,42 @@ async function getLocationName(locationId: string) {
   }
 
   return String(snapshot.data().name ?? "");
+}
+
+async function getActiveFacilityEquipmentIssues(facilityId: string) {
+  const snapshot = await getDocs(
+    query(collection(firestore, "issues"), where("facilityId", "==", facilityId)),
+  );
+
+  return snapshot.docs
+    .map((issueDoc) => issueDoc.data() as ManagedIssue)
+    .filter((issue) => activeIssueStatuses.includes(issue.status));
+}
+
+async function getPublicEquipmentSummary(publicSlug: string) {
+  if (!publicSlug) {
+    return null;
+  }
+
+  const snapshot = await getDoc(doc(firestore, "publicEquipment", publicSlug));
+
+  if (!snapshot.exists()) {
+    return null;
+  }
+
+  return snapshot.data() as PublicEquipmentSummary;
+}
+
+async function getActiveEquipmentIssues(equipment: Equipment) {
+  const snapshot = await getDocs(
+    query(
+      collection(firestore, "issues"),
+      where("facilityId", "==", equipment.facilityId),
+      where("equipmentId", "==", equipment.id),
+    ),
+  );
+
+  return snapshot.docs
+    .map((issueDoc) => issueDoc.data() as ManagedIssue)
+    .filter((issue) => activeIssueStatuses.includes(issue.status));
 }

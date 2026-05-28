@@ -4,24 +4,30 @@ import {
   getDocs,
   query,
   setDoc,
-  updateDoc,
   where,
+  writeBatch,
 } from "firebase/firestore";
 import { tryCreateActivityFeedItem } from "@/lib/db/activity";
+import { syncEquipmentStatus } from "@/lib/db/equipment-status";
 import { getSamplingStatesForTask, updateSamplingStatesForSpotCheck } from "@/lib/db/sampling";
 import { firestore } from "@/lib/firebase/client";
 import {
   getEffectiveSamplingState,
   getSpotCheckSampleReason,
 } from "@/lib/spot-checks/sampling";
-import type { SpotCheck, SpotCheckStatus } from "@/types/spot-check";
+import type { SamplingState, SpotCheck, SpotCheckStatus } from "@/types/spot-check";
 import type { CareTaskInstance } from "@/types/task";
 
-export async function createSpotCheckForTask(task: CareTaskInstance) {
+export async function createSpotCheckForTask(
+  task: CareTaskInstance,
+  effectiveSamplingState?: SamplingState | null,
+) {
   const now = new Date().toISOString();
   const spotCheckRef = doc(collection(firestore, "spotChecks"));
-  const samplingStates = await getSamplingStatesForTask(task);
-  const effectiveSamplingState = getEffectiveSamplingState(samplingStates);
+  const sampleState =
+    effectiveSamplingState === undefined
+      ? getEffectiveSamplingState(await getSamplingStatesForTask(task))
+      : effectiveSamplingState;
   const spotCheck: SpotCheck = {
     id: spotCheckRef.id,
     facilityId: task.facilityId,
@@ -30,7 +36,7 @@ export async function createSpotCheckForTask(task: CareTaskInstance) {
     taskId: task.id,
     staffUserId: task.completedBy,
     status: "pending",
-    sampleReason: getSpotCheckSampleReason(task, new Date(), effectiveSamplingState),
+    sampleReason: getSpotCheckSampleReason(task, new Date(), sampleState),
     managerNote: "",
     reviewedBy: "",
     reviewedAt: "",
@@ -67,20 +73,47 @@ export async function updateSpotCheckReview({
   task: CareTaskInstance;
 }) {
   const now = new Date().toISOString();
+  const trimmedManagerNote = managerNote.trim();
   const updates = {
-    managerNote: managerNote.trim(),
+    managerNote: trimmedManagerNote,
     reviewedAt: now,
     reviewedBy,
     status,
     updatedAt: now,
   };
-
-  await updateDoc(doc(firestore, "spotChecks", spotCheck.id), updates);
-  await updateSamplingStatesForSpotCheck({
-    reviewedStatus: status,
+  const batch = writeBatch(firestore);
+  const spotCheckRef = doc(firestore, "spotChecks", spotCheck.id);
+  const correctiveTask = await buildCorrectiveTaskIfNeeded({
+    managerNote: trimmedManagerNote,
+    now,
     spotCheck,
+    status,
     task,
   });
+
+  batch.update(spotCheckRef, updates);
+
+  if (correctiveTask) {
+    batch.set(doc(firestore, "careTaskInstances", correctiveTask.id), correctiveTask);
+  }
+
+  await batch.commit();
+
+  try {
+    await updateSamplingStatesForSpotCheck({
+      reviewedStatus: status,
+      spotCheck,
+      task,
+    });
+  } catch {
+    // Sampling confidence is adaptive context. A review outcome should still save if this update fails.
+  }
+
+  try {
+    await syncEquipmentStatus(spotCheck.equipmentId);
+  } catch {
+    // Status sync should not make the saved review appear to fail.
+  }
 
   await tryCreateActivityFeedItem({
     actorId: reviewedBy,
@@ -90,7 +123,7 @@ export async function updateSpotCheckReview({
     facilityId: spotCheck.facilityId,
     issueId: "",
     locationId: spotCheck.locationId,
-    managerOnly: false,
+    managerOnly: true,
     meta: status.replaceAll("_", " "),
     taskId: spotCheck.taskId,
     title: "Spot check completed",
@@ -101,4 +134,70 @@ export async function updateSpotCheckReview({
     ...spotCheck,
     ...updates,
   };
+}
+
+async function buildCorrectiveTaskIfNeeded({
+  managerNote,
+  now,
+  spotCheck,
+  status,
+  task,
+}: {
+  managerNote: string;
+  now: string;
+  spotCheck: SpotCheck;
+  status: SpotCheckStatus;
+  task: CareTaskInstance;
+}) {
+  if (status !== "failed" && status !== "recheck_required") {
+    return null;
+  }
+
+  const existingCorrectiveTasks = await getDocs(
+    query(
+      collection(firestore, "careTaskInstances"),
+      where("facilityId", "==", spotCheck.facilityId),
+      where("sourceSpotCheckId", "==", spotCheck.id),
+    ),
+  );
+  const hasOpenCorrectiveTask = existingCorrectiveTasks.docs.some((taskDoc) => {
+    const taskData = taskDoc.data() as CareTaskInstance;
+
+    return taskData.status !== "completed";
+  });
+
+  if (hasOpenCorrectiveTask) {
+    return null;
+  }
+
+  const correctiveTaskRef = doc(collection(firestore, "careTaskInstances"));
+  const reworkReason =
+    status === "failed" ? "Manager failed the spot check." : "Manager requested a recheck.";
+
+  return {
+    assignedTo: spotCheck.staffUserId,
+    category: task.category,
+    checklistCompleted: [],
+    checklistItems: task.checklistItems ?? [],
+    completedAt: "",
+    completedBy: "",
+    createdAt: now,
+    description: managerNote || reworkReason,
+    dueAt: now,
+    equipmentId: spotCheck.equipmentId,
+    evidence: "",
+    evidenceLevel: task.evidenceLevel,
+    facilityId: spotCheck.facilityId,
+    id: correctiveTaskRef.id,
+    locationId: spotCheck.locationId,
+    note: "",
+    originalTaskId: task.id,
+    photoUrl: "",
+    qrConfirmation: "",
+    scheduleId: "",
+    sourceSpotCheckId: spotCheck.id,
+    status: "pending",
+    title: `Rework: ${task.title || "spot check follow-up"}`,
+    updatedAt: now,
+  } satisfies CareTaskInstance;
 }

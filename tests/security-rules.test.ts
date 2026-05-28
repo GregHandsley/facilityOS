@@ -23,12 +23,18 @@ describe("Firestore security rules", () => {
   it("keeps manager-only data away from staff and public users", () => {
     expect(firestoreRules).toContain("match /aiInsights/{insightId}");
     expect(firestoreRules).toContain("match /replacementReviews/{reviewId}");
+    expect(firestoreRules).toContain(
+      "function replacementReviewFieldsAreValid(reviewId)",
+    );
     expect(firestoreRules).toContain("managerForFacility(resource.data.facilityId)");
   });
 
   it("limits manager issue updates to issue management fields", () => {
     expect(firestoreRules).toContain("match /issues/{issueId}");
     expect(firestoreRules).toContain('"internalNotes"');
+    expect(firestoreRules).toContain('"aiAnalysis"');
+    expect(firestoreRules).toContain('"aiAnalyzedAt"');
+    expect(firestoreRules).toContain('"aiError"');
     expect(firestoreRules).toContain('"resolvedAt"');
     expect(firestoreRules).toContain(
       "request.resource.data.equipmentId == resource.data.equipmentId",
@@ -49,7 +55,9 @@ describe("Firestore security rules", () => {
     expect(firestoreRules).toContain("match /samplingStates/{stateId}");
     expect(firestoreRules).toContain("function samplingStateFieldsAreValid()");
     expect(firestoreRules).toContain("request.resource.data.sampleRate <= 0.6");
-    expect(firestoreRules).toContain("managerForFacility(request.resource.data.facilityId)");
+    expect(firestoreRules).toContain(
+      "managerForFacility(request.resource.data.facilityId)",
+    );
   });
 
   it("limits public fault reports to safe create-only fields", () => {
@@ -71,6 +79,7 @@ describe("Firestore security rules", () => {
     expect(firestoreRules).toContain("allow get: if true;");
     expect(firestoreRules).toContain("allow list: if false;");
     expect(firestoreRules).toContain("function isPublicFaultStateUpdate()");
+    expect(firestoreRules).toContain('request.resource.data.publicStatus == "amber"');
     expect(firestoreRules).toContain("function isCareSummaryUpdate()");
     expect(firestoreRules).toContain('"lastCleanedAt"');
     expect(firestoreRules).toContain("allow delete: if false;");
@@ -80,8 +89,13 @@ describe("Firestore security rules", () => {
 
   it("allows staff task completion fields without schedule edits", () => {
     expect(firestoreRules).toContain("match /careTaskInstances/{taskId}");
+    expect(firestoreRules).toContain("function staffCanReadTask(taskData)");
+    expect(firestoreRules).toContain("taskData.assignedTo == request.auth.uid");
+    expect(firestoreRules).toContain("function staffCanCompleteTask()");
     expect(firestoreRules).toContain("function taskEvidenceSatisfied()");
-    expect(firestoreRules).toContain("staffForFacility(resource.data.facilityId)");
+    expect(firestoreRules).toContain(
+      "request.resource.data.completedBy == request.auth.uid",
+    );
     expect(firestoreRules).toContain('"completedAt"');
     expect(firestoreRules).toContain('"completedBy"');
     expect(firestoreRules).toContain('"checklistCompleted"');
@@ -93,7 +107,9 @@ describe("Firestore security rules", () => {
   it("allows narrow out-of-order equipment updates", () => {
     expect(firestoreRules).toContain("function staffMarksEquipmentOutOfOrder()");
     expect(firestoreRules).toContain("function teamMarksPublicEquipmentOutOfOrder()");
-    expect(firestoreRules).toContain("function managerReturnsPublicEquipmentToService()");
+    expect(firestoreRules).toContain(
+      "function managerReturnsPublicEquipmentToService()",
+    );
     expect(firestoreRules).toContain("match /outOfOrderEvents/{eventId}");
     expect(firestoreRules).toContain('"linkedIssueId"');
     expect(firestoreRules).toContain('"returnedToServiceBy"');
@@ -106,6 +122,11 @@ describe("Firestore security rules", () => {
     expect(firestoreRules).toContain(
       "resource.data.managerOnly != true || isManager()",
     );
+    expect(firestoreRules).toContain("function activityVisibilityIsSafe()");
+    expect(firestoreRules).toContain(
+      'request.resource.data.type != "spot_check_completed"',
+    );
+    expect(firestoreRules).toContain("request.resource.data.managerOnly == true");
     expect(firestoreRules).toContain('"fault_reported"');
     expect(firestoreRules).toContain('"actorRole"');
   });
@@ -115,9 +136,7 @@ describe("Storage security rules", () => {
   it("scopes private facility files by user facility", () => {
     expect(storageRules).toContain("function belongsToFacility(facilityId)");
     expect(storageRules).toContain("userProfile().data.facilityId == facilityId");
-    expect(storageRules).toContain(
-      "match /facilities/{facilityId}/{allPaths=**}",
-    );
+    expect(storageRules).toContain("match /facilities/{facilityId}/{allPaths=**}");
   });
 
   it("allows public report image creation without exposing private reads", () => {

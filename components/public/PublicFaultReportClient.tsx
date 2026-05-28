@@ -8,10 +8,7 @@ import {
   createPublicIssueId,
   uploadPublicFaultPhoto,
 } from "@/lib/db/issues";
-import {
-  publicIssueCategories,
-  validatePublicIssueReport,
-} from "@/lib/issues/public-report";
+import { validatePublicIssueReport } from "@/lib/issues/public-report";
 import type { IssueCategory } from "@/types/issue";
 import type { PublicEquipmentStatus } from "@/types/equipment";
 import { PremiumCard } from "@/components/cards/PremiumCard";
@@ -23,7 +20,6 @@ export function PublicFaultReportClient({
 }: {
   equipment: PublicEquipmentStatus;
 }) {
-  const [category, setCategory] = useState<IssueCategory>("equipment_fault");
   const [description, setDescription] = useState("");
   const [contactEmail, setContactEmail] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
@@ -37,7 +33,7 @@ export function PublicFaultReportClient({
 
     const issueId = createPublicIssueId();
     const baseInput = {
-      category,
+      category: "equipment_fault" as IssueCategory,
       contactEmail,
       description,
       equipmentId: equipment.equipmentId,
@@ -121,21 +117,6 @@ export function PublicFaultReportClient({
 
         <form className="mt-6 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
           <label className="block">
-            <span className="text-sm font-medium text-muted-foreground">Category</span>
-            <select
-              className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-facility-graphite px-4 text-sm outline-none transition focus:border-primary"
-              onChange={(event) => setCategory(event.target.value as IssueCategory)}
-              value={category}
-            >
-              {publicIssueCategories.map((issueCategory) => (
-                <option key={issueCategory.value} value={issueCategory.value}>
-                  {issueCategory.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="block">
             <span className="text-sm font-medium text-muted-foreground">
               What is wrong?
             </span>
@@ -184,7 +165,7 @@ export function PublicFaultReportClient({
 
           <Button disabled={isSubmitting} type="submit" className="w-full">
             <Send className="h-4 w-4" />
-            {isSubmitting ? "Sending report" : "Submit fault report"}
+            {isSubmitting ? "Sending report" : "Send report"}
           </Button>
         </form>
       </PremiumCard>

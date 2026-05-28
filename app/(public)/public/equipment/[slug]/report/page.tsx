@@ -2,6 +2,8 @@ import { notFound } from "next/navigation";
 import { getPublicEquipmentBySlug } from "@/lib/db/equipment";
 import { PublicFaultReportClient } from "@/components/public/PublicFaultReportClient";
 
+export const dynamic = "force-dynamic";
+
 export default async function PublicReportPage({
   params,
 }: {
